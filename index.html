@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Thử gửi Zalo</title>
+<style>
+  :root {
+    --bg: #f6f4f0;
+    --ink: #5e5856;
+    --muted: #9a9491;
+    --line: #dcd7d1;
+    --card: #fbfaf7;
+    --accent: #5e5856;
+    --ok: #5d7a52;
+    --warn: #a2652f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.5 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 520px; margin: 0 auto; padding: 32px 16px 80px; }
+  h1 {
+    font-family: Georgia, "Times New Roman", serif; font-weight: 400;
+    letter-spacing: .35em; font-size: 26px; margin: 0 0 4px;
+  }
+  .sub { color: var(--muted); margin: 0 0 28px; font-size: 15px; }
+  h2 { font-size: 15px; font-weight: 600; letter-spacing: .04em; text-transform: lowercase; margin: 32px 0 12px; }
+  label { display: block; font-size: 15px; margin: 14px 0 6px; }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; font: inherit; color: inherit; background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+  }
+  input[type=number] { font-size: 22px; }
+  textarea { min-height: 70px; resize: vertical; }
+  .photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .slot {
+    position: relative; aspect-ratio: 3/4; border: 1px dashed var(--line); border-radius: 10px;
+    background: var(--card); display: flex; align-items: center; justify-content: center;
+    text-align: center; font-size: 13px; color: var(--muted); overflow: hidden; cursor: pointer;
+  }
+  .slot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .slot input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .slot .name { padding: 6px; }
+  pre {
+    white-space: pre-wrap; background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px; font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; margin: 0;
+  }
+  button {
+    display: block; width: 100%; font: inherit; color: var(--bg); background: var(--accent);
+    border: 0; border-radius: 12px; padding: 15px 16px; margin: 10px 0 4px; cursor: pointer; text-align: left;
+  }
+  button small { display: block; opacity: .75; font-size: 13px; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); text-align: center; }
+  .result { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 18px; }
+  .result label {
+    margin: 0; font-size: 13px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; background: var(--card);
+  }
+  .result input { margin: 0 4px 0 0; }
+  .diag { font-size: 13px; color: var(--muted); }
+  .diag b { color: var(--ink); font-weight: 600; }
+  #log { font-size: 13px; color: var(--muted); min-height: 1em; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); }
+  ol { padding-left: 20px; } ol li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>thử gửi zalo</h1>
+  <p class="sub">(á) · trang thử, không lưu dữ liệu đi đâu cả</p>
+
+  <h2>cách thử</h2>
+  <ol>
+    <li>Điền vài ô, chụp 3 ảnh.</li>
+    <li>Bấm lần lượt cách A, B, C. Mỗi lần gửi vào <b>nhóm Zalo thử</b> (đừng gửi vào nhóm thật).</li>
+    <li>Mở Zalo xem nhận được gì, chọn kết quả dưới mỗi nút.</li>
+    <li>Bấm "Chép kết quả" ở cuối trang và gửi lại cho Claude.</li>
+  </ol>
+
+  <h2>báo cáo mẫu</h2>
+  <label for="shift">Ca</label>
+  <select id="shift">
+    <option>sáng</option><option selected>chiều</option><option>tối</option>
+  </select>
+  <label for="who">Người giữ ca</label>
+  <input id="who" type="text" value="Minh Anh" autocomplete="off">
+  <label for="rev">Doanh thu iPOS (đ)</label>
+  <input id="rev" type="number" inputmode="numeric" min="0" value="3450000">
+  <label for="note">Ghi chú</label>
+  <textarea id="note">khách đông từ 17h</textarea>
+
+  <h2>ảnh (chụp trực tiếp)</h2>
+  <div class="photos" id="photos"></div>
+
+  <h2>tin sẽ gửi</h2>
+  <pre id="preview"></pre>
+
+  <h2>gửi thử</h2>
+
+  <button id="btnA">Cách A · chữ + ảnh cùng lúc<small>Một lần chia sẻ, mong Zalo nhận cả hai</small></button>
+  <div class="result" data-k="A"></div>
+
+  <button id="btnB">Cách B · tự chép chữ, rồi gửi ảnh<small>Sau khi gửi ảnh, giữ tay vào ô chat → Dán</small></button>
+  <div class="result" data-k="B"></div>
+
+  <button id="btnC">Cách C · chỉ gửi chữ<small>Để so sánh: Zalo có nhận chữ không</small></button>
+  <div class="result" data-k="C"></div>
+
+  <p id="log"></p>
+
+  <h2>thông tin máy</h2>
+  <div class="diag" id="diag"></div>
+
+  <button class="ghost" id="btnCopy">Chép kết quả</button>
+</main>
+
+<script>
+(() => {
+  const SLOTS = ['quầy pha chế', 'quầy thu ngân', 'sân trước'];
+  const photos = new Array(SLOTS.length).fill(null); // File | null
+  const $ = id => document.getElementById(id);
+  const log = (msg, cls) => { const el = $('log'); el.textContent = msg; el.className = cls || ''; };
+
+  const pad = n => String(n).padStart(2, '0');
+  const stampTime = d => `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const money = v => (Number(v) || 0).toLocaleString('vi-VN') + 'đ';
+
+  // ---- photo slots ----
+  const wrap = $('photos');
+  SLOTS.forEach((name, i) => {
+    const slot = document.createElement('label');
+    slot.className = 'slot';
+    const span = document.createElement('span');
+    span.className = 'name';
+    span.textContent = name;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.setAttribute('capture', 'environment');
+    input.addEventListener('change', async () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      log('Đang nén ảnh…');
+      try {
+        const out = await compress(f, name, i);
+        photos[i] = out;
+        let img = slot.querySelector('img');
+        if (!img) { img = document.createElement('img'); slot.prepend(img); }
+        img.src = URL.createObjectURL(out);
+        log(`Ảnh "${name}": ${Math.round(out.size / 1024)} KB`, 'ok');
+      } catch (e) {
+        log('Không nén được ảnh: ' + e.message, 'warn');
+      }
+      render();
+    });
+    slot.append(span, input);
+    wrap.append(slot);
+  });
+
+  function loadImage(file) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = () => rej(new Error('không đọc được ảnh'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  async function compress(file, name, i) {
+    const img = await loadImage(file); // trình duyệt hiện đại tự xoay theo EXIF
+    const MAX = 1280;
+    const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    // dấu giờ
+    const text = `(á) · ${name} · ${$('who').value.trim() || '—'} · ${stampTime(new Date())}`;
+    const fs = Math.max(14, Math.round(w / 34));
+    ctx.font = `${fs}px -apple-system, Segoe UI, Roboto, Arial, sans-serif`;
+    const pad = Math.round(fs * 0.6);
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = 'rgba(0,0,0,.45)';
+    ctx.fillRect(0, h - fs - pad * 2, tw + pad * 2, fs + pad * 2);
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, pad, h - pad - fs / 2);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.72));
+    if (!blob) throw new Error('toBlob lỗi');
+    return new File([blob], `a-${i + 1}-${Date.now()}.jpg`, { type: 'image/jpeg' });
+  }
+
+  // ---- message ----
+  function message() {
+    const d = new Date();
+    const n = photos.filter(Boolean).length;
+    return [
+      `(á) · Chốt ca ${$('shift').value} · ${stampTime(d)}`,
+      `Giữ ca: ${$('who').value.trim() || '—'}`,
+      `Doanh thu iPOS: ${money($('rev').value)}`,
+      `Ghi chú: ${$('note').value.trim() || '—'}`,
+      `[${n} ảnh] · tin thử từ trang test`
+    ].join('\n');
+  }
+  function render() { $('preview').textContent = message(); }
+  ['shift', 'who', 'rev', 'note'].forEach(id => $(id).addEventListener('input', render));
+  render();
+
+  const files = () => photos.filter(Boolean);
+
+  function needPhotos() {
+    if (files().length) return false;
+    log('Chụp ít nhất 1 ảnh trước đã.', 'warn');
+    return true;
+  }
+
+  function report(k, err) {
+    if (!err) { log(`Cách ${k}: đã mở bảng chia sẻ. Xem Zalo rồi chọn kết quả bên dưới.`, 'ok'); return; }
+    if (err.name === 'AbortError') { log(`Cách ${k}: đã huỷ chia sẻ.`); return; }
+    log(`Cách ${k} lỗi: ${err.name} – ${err.message}`, 'warn');
+    lastErrors[k] = `${err.name}: ${err.message}`;
+  }
+  const lastErrors = {};
+
+  // A: text + files together. share() phải gọi ngay trong lần bấm, không await gì trước đó.
+  $('btnA').addEventListener('click', () => {
+    if (needPhotos()) return;
+    const data = { text: message(), files: files() };
+    if (!navigator.share) return report('A', new Error('máy không hỗ trợ chia sẻ'));
+    if (navigator.canShare && !navigator.canShare(data)) return report('A', new Error('canShare = false với ảnh'));
+    navigator.share(data).then(() => report('A'), e => report('A', e));
+  });
+
+  // B: chép chữ vào bộ nhớ tạm và mở chia sẻ ảnh trong cùng một lần bấm
+  $('btnB').addEventListener('click', () => {
+    if (needPhotos()) return;
+    const text = message();
+    let copied = 'chưa rõ';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => { copied = 'ok'; }, () => { copied = 'lỗi'; lastErrors.B_copy = 'clipboard lỗi'; });
+    } else {
+      lastErrors.B_copy = 'không có clipboard API';
+    }
+    const data = { files: files() };
+    if (!navigator.share) return report('B', new Error('máy không hỗ trợ chia sẻ'));
+    navigator.share(data).then(() => report('B'), e => report('B', e));
+  });
+
+  // C: chỉ chữ
+  $('btnC').addEventListener('click', () => {
+    if (!navigator.share) return report('C', new Error('máy không hỗ trợ chia sẻ'));
+    navigator.share({ text: message() }).then(() => report('C'), e => report('C', e));
+  });
+
+  // ---- result pickers ----
+  const OPTIONS = ['cả chữ và ảnh', 'chỉ ảnh', 'chỉ chữ', 'lỗi / không thấy Zalo'];
+  const OPTIONS_C = ['nhận được chữ', 'không nhận', 'lỗi / không thấy Zalo'];
+  document.querySelectorAll('.result').forEach(box => {
+    const k = box.dataset.k;
+    (k === 'C' ? OPTIONS_C : OPTIONS).forEach(o => {
+      const l = document.createElement('label');
+      const r = document.createElement('input');
+      r.type = 'radio'; r.name = 'res' + k; r.value = o;
+      l.append(r, document.createTextNode(o));
+      box.append(l);
+    });
+    if (k === 'B') {
+      const l = document.createElement('label');
+      const c = document.createElement('input');
+      c.type = 'checkbox'; c.id = 'pasteOK';
+      l.append(c, document.createTextNode('dán được chữ'));
+      box.append(l);
+    }
+  });
+
+  // ---- diagnostics ----
+  const canFiles = (() => {
+    try {
+      const f = new File([new Blob(['x'], { type: 'image/jpeg' })], 't.jpg', { type: 'image/jpeg' });
+      return navigator.canShare ? navigator.canShare({ files: [f] }) : 'không có canShare';
+    } catch (e) { return 'lỗi'; }
+  })();
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const diag = {
+    'HTTPS (secure context)': window.isSecureContext,
+    'navigator.share': !!navigator.share,
+    'chia sẻ được ảnh': canFiles,
+    'clipboard': !!(navigator.clipboard && navigator.clipboard.writeText),
+    'mở từ màn hình chính': standalone,
+    'trình duyệt': navigator.userAgent
+  };
+  const dEl = $('diag');
+  Object.entries(diag).forEach(([k, v]) => {
+    const p = document.createElement('div');
+    const b = document.createElement('b');
+    b.textContent = k + ': ';
+    p.append(b, document.createTextNode(String(v)));
+    dEl.append(p);
+  });
+  if (!window.isSecureContext) log('Trang chưa chạy qua HTTPS nên nút chia sẻ sẽ không hoạt động.', 'warn');
+
+  // ---- copy results ----
+  $('btnCopy').addEventListener('click', async () => {
+    const pick = k => (document.querySelector(`input[name=res${k}]:checked`) || {}).value || 'chưa chọn';
+    const out = [
+      'KẾT QUẢ THỬ ZALO',
+      `A (chữ + ảnh): ${pick('A')}`,
+      `B (chép + ảnh): ${pick('B')} · dán được chữ: ${$('pasteOK').checked ? 'có' : 'không'}`,
+      `C (chỉ chữ): ${pick('C')}`,
+      `Lỗi: ${JSON.stringify(lastErrors)}`,
+      ...Object.entries(diag).map(([k, v]) => `${k}: ${v}`)
+    ].join('\n');
+    try {
+      await navigator.clipboard.writeText(out);
+      log('Đã chép kết quả. Dán vào chat gửi Claude nhé.', 'ok');
+    } catch {
+      $('preview').textContent = out;
+      log('Không chép tự động được. Kết quả đang hiện ở ô "tin sẽ gửi", hãy chép tay.', 'warn');
+    }
+  });
+})();
+</script>
+</body>
+</html>
