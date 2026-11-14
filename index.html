@@ -108,6 +108,10 @@
   <button id="btnC">Cách C · chỉ gửi chữ<small>Để so sánh: Zalo có nhận chữ không</small></button>
   <div class="result" data-k="C"></div>
 
+  <button id="btnD1">Cách D · bước 1: gửi chữ<small>Gửi xong quay lại trang này bấm bước 2</small></button>
+  <button id="btnD2" disabled style="opacity:.4">Cách D · bước 2: gửi ảnh<small>Chọn đúng nhóm vừa gửi chữ</small></button>
+  <div class="result" data-k="D"></div>
+
   <p id="log"></p>
 
   <h2>thông tin máy</h2>
@@ -238,9 +242,10 @@
   $('btnB').addEventListener('click', () => {
     if (needPhotos()) return;
     const text = message();
-    let copied = 'chưa rõ';
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(() => { copied = 'ok'; }, () => { copied = 'lỗi'; lastErrors.B_copy = 'clipboard lỗi'; });
+      navigator.clipboard.writeText(text).then(
+        () => { lastErrors.B_copy = 'chép ok'; },
+        e => { lastErrors.B_copy = 'chép lỗi: ' + (e && e.name); });
     } else {
       lastErrors.B_copy = 'không có clipboard API';
     }
@@ -255,12 +260,28 @@
     navigator.share({ text: message() }).then(() => report('C'), e => report('C', e));
   });
 
+  // D: hai lần chia sẻ riêng, mỗi lần một lần bấm
+  const d2 = $('btnD2');
+  $('btnD1').addEventListener('click', () => {
+    if (needPhotos()) return;
+    if (!navigator.share) return report('D1', new Error('máy không hỗ trợ chia sẻ'));
+    navigator.share({ text: message() }).then(() => {
+      report('D1');
+      d2.disabled = false; d2.style.opacity = 1;
+      log('Bước 1 xong. Bấm "bước 2: gửi ảnh".', 'ok');
+    }, e => report('D1', e));
+  });
+  d2.addEventListener('click', () => {
+    navigator.share({ files: files() }).then(() => report('D2'), e => report('D2', e));
+  });
+
   // ---- result pickers ----
   const OPTIONS = ['cả chữ và ảnh', 'chỉ ảnh', 'chỉ chữ', 'lỗi / không thấy Zalo'];
   const OPTIONS_C = ['nhận được chữ', 'không nhận', 'lỗi / không thấy Zalo'];
   document.querySelectorAll('.result').forEach(box => {
     const k = box.dataset.k;
-    (k === 'C' ? OPTIONS_C : OPTIONS).forEach(o => {
+    const OPTIONS_D = ['cả 2 bước được', 'chỉ bước 1 được', 'chỉ bước 2 được', 'lỗi cả hai'];
+    (k === 'C' ? OPTIONS_C : k === 'D' ? OPTIONS_D : OPTIONS).forEach(o => {
       const l = document.createElement('label');
       const r = document.createElement('input');
       r.type = 'radio'; r.name = 'res' + k; r.value = o;
@@ -310,6 +331,7 @@
       `A (chữ + ảnh): ${pick('A')}`,
       `B (chép + ảnh): ${pick('B')} · dán được chữ: ${$('pasteOK').checked ? 'có' : 'không'}`,
       `C (chỉ chữ): ${pick('C')}`,
+      `D (hai bước): ${pick('D')}`,
       `Lỗi: ${JSON.stringify(lastErrors)}`,
       ...Object.entries(diag).map(([k, v]) => `${k}: ${v}`)
     ].join('\n');
