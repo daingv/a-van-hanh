@@ -4,7 +4,7 @@
   const CFG = window.APP_CONFIG || {};
   const MOCK = !CFG.API_URL;
   const IDLE_MS = 10 * 60 * 1000;
-  const NO_ZALO = ['lịch sử ngân hàng']; // ảnh không gửi vào nhóm Zalo
+  const NO_ZALO = []; // ảnh chỉ lưu Drive, không gửi vào nhóm Zalo
 
   const S = { name: null, pin: null, info: null, offset: 0 };
   const $app = document.getElementById('app');
@@ -77,7 +77,8 @@
     if (/^\d+$/.test(s)) { const n = parseInt(s, 10); return n > 0 && n < 1000 ? n * 1000 : n; }
     return null;
   }
-  const unexplained = (d, e) => (!d ? 0 : Math.sign(d) * Math.max(0, Math.abs(d) - (e || 0)));
+  // lệch có chiều: âm = thiếu, dương = thừa
+  const diffText = n => (!n ? 'khớp' : (n < 0 ? 'thiếu ' : 'thừa ') + money(Math.abs(n)));
   const hmToMin = s => { const p = String(s).split(':'); return +p[0] * 60 + +(p[1] || 0); };
   function shiftNameNow() {
     const c = S.info.cfg, m = now().getHours() * 60 + now().getMinutes();
@@ -447,6 +448,7 @@
     const saved = (await DB.get(key)) || {};
     const F = Object.assign({ money: {}, explains: [], reason: '', stock: {}, others: [], handover: [{ text: '' }], incident: '', note: '' }, saved.F || {});
     const store = saved.photos || {};
+    delete store['két tiền']; delete store['lịch sử ngân hàng']; // bản nháp từ bản cũ
     const save = () => DB.set(key, { F, photos: store });
 
     // tiền
@@ -469,41 +471,56 @@
 
     // giải trình
     const exWrap = h('div');
+    // chiều mặc định của dòng giải trình mới: theo chiều đang lệch của loại tiền đó
+    const curDir = kind => {
+      const m = F.money;
+      const d = kind === 'CK' ? (m.bank || 0) - (m.ipBank || 0) : (m.cash || 0) - (m.opening || 0) - (m.ipCash || 0);
+      return d > 0 ? 'thừa' : 'thiếu';
+    };
     function exRow(e) {
-      const seg = h('div', { class: 'seg' }, ['TM', 'CK'].map(k => h('button', { type: 'button', class: e.kind === k ? 'on' : '',
-        onclick: () => { e.kind = k; [...seg.children].forEach(b => b.classList.toggle('on', b.textContent === k)); update(); } }, k)));
-      const amt = h('input', { type: 'text', placeholder: '50k', value: e.raw, autocomplete: 'off', style: 'width:110px' });
+      if (!e.dir) e.dir = curDir(e.kind);
+      const segBtns = (list, get, set) => {
+        const box = h('div', { class: 'seg' }, list.map(k => h('button', { type: 'button', class: get() === k ? 'on' : '',
+          onclick: () => { set(k); [...box.children].forEach(b => b.classList.toggle('on', b.textContent === k)); paint(); update(); } }, k)));
+        return box;
+      };
+      const kindSeg = segBtns(['TM', 'CK'], () => e.kind, k => { e.kind = k; });
+      const dirSeg = segBtns(['thiếu', 'thừa'], () => e.dir, k => { e.dir = k; });
+      const amt = h('input', { type: 'text', placeholder: '50k', value: e.raw, autocomplete: 'off' });
       const prev = h('div', { class: 'hint' });
-      const rsn = h('input', { type: 'text', placeholder: 'lý do', value: e.reason, autocomplete: 'off' });
+      const rsn = h('input', { type: 'text', placeholder: 'lý do, ví dụ: khách ship chưa chuyển khoản', value: e.reason, autocomplete: 'off' });
       const paint = () => {
         const v = parseMoney(amt.value);
         amt.classList.toggle('invalid', !!amt.value.trim() && v === null);
-        prev.textContent = !amt.value.trim() ? '' : v === null ? 'không hiểu số này' : '= ' + money(v);
-        prev.className = 'hint' + (v === null && amt.value.trim() ? ' bad' : '');
+        prev.textContent = !amt.value.trim() ? '' : v === null ? 'không hiểu số này'
+          : `= ${e.kind === 'CK' ? 'chuyển khoản' : 'tiền mặt'} ${e.dir} ${money(v)}`;
+        prev.className = 'hint' + (v === null && amt.value.trim() ? ' bad' : e.dir === 'thiếu' ? ' minus' : ' plus');
       };
       amt.addEventListener('input', () => { e.raw = amt.value; paint(); update(); });
       rsn.addEventListener('input', () => { e.reason = rsn.value; save(); });
       paint();
       return h('div', { class: 'card' },
-        h('div', { class: 'row' }, seg, amt, h('div', { class: 'grow' }),
+        h('div', { class: 'row' }, kindSeg, dirSeg, h('div', { class: 'grow' }),
           h('button', { class: 'x', type: 'button', 'aria-label': 'xoá dòng', onclick: () => { F.explains.splice(F.explains.indexOf(e), 1); drawEx(); update(); } }, '×')),
-        prev, h('div', { style: 'margin-top:8px' }, rsn));
+        h('div', { style: 'margin-top:8px' }, amt), prev, h('div', { style: 'margin-top:8px' }, rsn));
     }
     function drawEx() { exWrap.replaceChildren(...F.explains.map(exRow)); }
 
     function cashCalc() {
       const m = F.money;
-      const filled = ['ipCash', 'ipBank', 'cash', 'bank'].every(k => m[k] !== undefined && m[k] !== '');
+      const filled = ['ipCash', 'ipBank', 'opening', 'cash', 'bank'].every(k => m[k] !== undefined && m[k] !== '');
       if (!filled) return null;
       let exC = 0, exB = 0, bad = false;
       F.explains.forEach(e => {
         if (!String(e.raw || '').trim()) return;
         const v = parseMoney(e.raw);
         if (v === null) { bad = true; return; }
-        if (e.kind === 'CK') exB += v; else exC += v;
+        const sv = (e.dir === 'thừa' ? 1 : -1) * v;
+        if (e.kind === 'CK') exB += sv; else exC += sv;
       });
-      const dC = m.cash - m.ipCash, dB = m.bank - m.ipBank;
-      const uC = unexplained(dC, exC), uB = unexplained(dB, exB);
+      // két phải có = đầu ca + tiền mặt iPOS
+      const dC = m.cash - m.opening - m.ipCash, dB = m.bank - m.ipBank;
+      const uC = dC - exC, uB = dB - exB;
       const note = c.th.note;
       const misKey = Math.abs(uC) > note && Math.abs(uB) > note && (uC > 0) !== (uB > 0) && Math.abs(uC + uB) <= note;
       return { dC, dB, exC, exB, uC, uB, bad, misKey, needReason: Math.abs(uC) > note || Math.abs(uB) > note, over: uC < -c.th.alert };
@@ -561,14 +578,14 @@
     const note = h('textarea', { placeholder: 'không bắt buộc', value: F.note });
     note.addEventListener('input', () => { F.note = note.value; save(); });
 
-    const moneyPhotos = ['két tiền', 'phiếu chốt ca iPOS', 'lịch sử ngân hàng'];
+    const moneyPhotos = ['phiếu chốt ca iPOS'];
     const missing = h('div', { class: 'missing' });
     const submit = h('button', { class: 'btn', onclick: send }, 'gửi báo cáo');
 
     function lacking() {
       const out = [];
       const m = F.money;
-      const ml = { ipRevenue: 'doanh thu iPOS', ipCash: 'tiền mặt iPOS', ipBank: 'chuyển khoản iPOS', cash: 'tiền mặt đếm', bank: 'chuyển khoản ngân hàng' };
+      const ml = { ipRevenue: 'doanh thu iPOS', ipCash: 'tiền mặt iPOS', ipBank: 'chuyển khoản iPOS', opening: 'tiền mặt đầu ca', cash: 'tiền mặt đếm', bank: 'chuyển khoản ngân hàng' };
       Object.entries(ml).forEach(([k, l]) => { if (m[k] === undefined || m[k] === '') out.push(l); });
       const cc = cashCalc();
       if (cc && cc.bad) out.push('giải trình có số tiền không hiểu');
@@ -582,18 +599,25 @@
     function update() {
       const cc = cashCalc();
       if (!cc) {
-        cashBox.replaceChildren(h('div', { class: 'hint', text: 'Điền đủ 4 ô tiền mặt và chuyển khoản để xem chênh lệch.' }));
+        cashBox.replaceChildren(h('div', { class: 'hint', text: 'Điền đủ các ô tiền mặt (kể cả đầu ca) và chuyển khoản để xem chênh lệch.' }));
       } else {
-        const line = (label, d, ex, u) => {
-          if (!d) return h('div', { class: 'ok', text: `${label}: khớp ✓` });
-          let t = `${label}: lệch ${money(d)}`;
-          if (ex) t += ` · giải trình ${money(ex)} · còn ${money(u)}`;
+        const m = F.money;
+        const line = (label, d, ex, u, detail) => {
           const warn = Math.abs(u) > c.th.note;
-          return h('div', { class: warn ? 'warn' : 'ok', text: t + (warn ? ' ⚠' : ' ✓') });
+          const head = h('div', { class: 'cline' },
+            h('span', { text: label }),
+            h('strong', { class: !d ? 'ok' : d < 0 ? 'minus' : 'plus', text: diffText(d) + (!d ? ' ✓' : '') }));
+          const sub = [h('div', { class: 'hint', text: detail })];
+          if (d && ex) sub.push(h('div', { class: 'hint', text: `đã giải trình ${diffText(ex)}` }));
+          if (d) sub.push(h('div', { class: warn ? 'warn' : 'ok', text: `→ ${u ? "còn " + diffText(u) : "đã khớp"}${warn ? ' ⚠' : ' ✓'}` }));
+          return h('div', { class: 'cblock' }, head, ...sub);
         };
-        cashBox.replaceChildren(line('Tiền mặt', cc.dC, cc.exC, cc.uC), line('Chuyển khoản', cc.dB, cc.exB, cc.uB),
-          cc.misKey ? h('div', { class: 'warn', text: 'Có thể bấm nhầm tiền mặt / chuyển khoản trên iPOS.' }) : null,
-          cc.over ? h('div', { class: 'bad', text: 'Lệch quá ' + money(c.th.alert) + ': nhắn riêng head-barista hoặc chủ quán ngay.' }) : null);
+        cashBox.replaceChildren(
+          line('Tiền mặt trong két', cc.dC, cc.exC, cc.uC,
+            `đầu ca ${money(m.opening)} + iPOS ${money(m.ipCash)} = phải có ${money(m.opening + m.ipCash)} · đếm được ${money(m.cash)}`),
+          line('Chuyển khoản', cc.dB, cc.exB, cc.uB, `iPOS ${money(m.ipBank)} · ngân hàng ${money(m.bank)}`),
+          cc.misKey ? h('div', { class: 'warn', text: 'Có thể bấm nhầm tiền mặt / chuyển khoản trên iPOS.' }) : '',
+          cc.over ? h('div', { class: 'bad', text: 'Lệch quá ' + money(c.th.alert) + ': nhắn riêng head-barista hoặc chủ quán ngay.' }) : '');
       }
       const need = cc && cc.needReason;
       reasonWrap.replaceChildren(...(need ? [h('label', { class: 'f', text: 'lý do lệch (bắt buộc vì vẫn lệch quá ' + money(c.th.note) + ')' }), reason] : []));
@@ -612,7 +636,7 @@
         moneyPhotos.concat(['phiếu chi'], c.areas).forEach(a => { if (store[a] && store[a].id) photos[a] = store[a].id; });
         const payload = {
           money: F.money,
-          explains: F.explains.filter(e => String(e.raw || '').trim()).map(e => ({ kind: e.kind, raw: e.raw, reason: e.reason })),
+          explains: F.explains.filter(e => String(e.raw || '').trim()).map(e => ({ kind: e.kind, dir: e.dir, raw: e.raw, reason: e.reason })),
           reason: F.reason,
           photos,
           stock: Object.fromEntries(items.map(it => [it.name, { left: F.stock[it.name].left, refill: evening && F.stock[it.name].on ? F.stock[it.name].refill : '' }])),
@@ -638,19 +662,19 @@
       h('h3', { text: 'tiền theo iPOS' }),
       moneyField('ipRevenue', 'Tổng doanh thu'), moneyField('ipCash', 'Tiền mặt'), moneyField('ipBank', 'Chuyển khoản'),
       h('h3', { text: 'tiền thực tế' }),
-      moneyField('cash', 'Tiền mặt đếm trong két'), moneyField('bank', 'Chuyển khoản đã về (xem app ngân hàng)'),
+      moneyField('opening', 'Tiền mặt đầu ca (tiền lẻ có sẵn trong két lúc nhận ca)'),
+      moneyField('cash', 'Tiền mặt đếm trong két lúc chốt (tổng)'),
+      moneyField('bank', 'Chuyển khoản đã về (xem app ngân hàng)'),
       cashBox,
       h('h3', { text: 'giải trình' }),
-      h('p', { class: 'hint', text: 'Gõ số tiền kiểu 50k, 100.000, 1tr2… kèm lý do. Số trần như "50" hiểu là 50.000đ.' }),
+      h('p', { class: 'hint', text: 'Chọn tiền mặt (TM) hay chuyển khoản (CK), thiếu hay thừa, rồi gõ số tiền kiểu 50k, 100.000, 1tr2 kèm lý do. Số trần như "50" hiểu là 50.000đ.' }),
       exWrap,
       h('button', { class: 'add', type: 'button', onclick: () => { F.explains.push({ kind: 'TM', raw: '', reason: '' }); drawEx(); update(); } }, '+ thêm dòng giải trình'),
       reasonWrap,
       moneyField('tip', 'Tip tiền mặt (để riêng)', true),
-      h('h3', { text: 'ảnh tiền' }),
+      h('h3', { text: 'ảnh phiếu' }),
       h('div', { class: 'photos' },
-        photoSlot(store, 'két tiền', 'két tiền', { required: true, onChange: update }),
         photoSlot(store, 'phiếu chốt ca iPOS', 'phiếu chốt ca iPOS', { required: true, onChange: update }),
-        photoSlot(store, 'lịch sử ngân hàng', 'lịch sử ngân hàng (chỉ lưu, không gửi Zalo)', { required: true, onChange: update }),
         photoSlot(store, 'phiếu chi', 'phiếu chi (nếu có)', { onChange: update })),
       h('h3', { text: 'ảnh khu vực' }),
       h('div', { class: 'photos' }, c.areas.map(a => photoSlot(store, a, a, { required: true, onChange: update }))),
