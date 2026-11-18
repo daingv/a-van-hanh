@@ -1,10 +1,10 @@
 // Lưu sẵn khung app để mở nhanh khi mạng yếu. Không bao giờ đụng vào yêu cầu gửi tới máy chủ.
-const VERSION = 'a-v8';
+const VERSION = 'a-v9';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'mock.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -17,7 +17,8 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  e.respondWith(fetch(req).then(res => {
+  // cache: 'no-cache' = luôn hỏi lại GitHub (file chưa đổi thì chỉ nhận trả lời ngắn), không dùng bản cũ trình duyệt giữ 10 phút
+  e.respondWith(fetch(req, { cache: 'no-cache' }).then(res => {
     const copy = res.clone();
     caches.open(VERSION).then(c => c.put(req, copy));
     return res;
