@@ -51,6 +51,26 @@
           shifts: [{ code: 'FT1', start: '08:00', end: '16:00' }], openSince: open[b.name] || null,
           pendingTasks: tasks.length, pendingApprovals: isHead ? approvals.length : 0, cfg, summary: summary(b.name, isHead) });
       case 'summary': return ok(summary(b.name, isHead));
+      case 'week': {
+        const mon = new Date(); mon.setHours(0, 0, 0, 0); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7) + 7 * (b.week || 0));
+        const plan = { 'Đoàn Hạnh Nguyên': ['FT1', 'FT1', '', 'FT2', 'FT1+16-18', 'S+T', ''],
+          'Nguyễn Trâm Anh': ['S', 'C', 'S+C', '', 'T', 'FT2', 'S'], 'Hoàng Ngọc Tú': ['FT2', '', 'FT1', 'S', '', '10-14', 'FT2'] };
+        const def = { S: [8, 13], C: [13, 18], T: [18, 23], FT1: [8, 16], FT2: [15, 23] };
+        const hm2 = x => String(Math.floor(x)).padStart(2, '0') + ':' + String(Math.round((x % 1) * 60)).padStart(2, '0');
+        const days = [...Array(7)].map((_, i) => {
+          const d = new Date(mon); d.setDate(d.getDate() + i);
+          const people = Object.entries(plan).map(([name, row]) => {
+            const parts = row[(i + (b.week || 0) * 2) % 7].split('+').filter(Boolean).map(t => def[t] || t.split('-').map(Number)).sort((x, y) => x[0] - y[0]);
+            const blocks = [];
+            parts.forEach(([s0, e0], k) => { const last = blocks[blocks.length - 1];
+              if (last && s0 <= last.e) { last.e = Math.max(last.e, e0); last.codes += '+' + row[(i + (b.week || 0) * 2) % 7].split('+')[k]; }
+              else blocks.push({ s: s0, e: e0, codes: row[(i + (b.week || 0) * 2) % 7].split('+')[k] }); });
+            return { name, me: name === b.name, blocks: blocks.map(x => ({ start: d.getTime() + x.s * 36e5, end: d.getTime() + x.e * 36e5, startHM: hm2(x.s), endHM: hm2(x.e), codes: x.codes })) };
+          }).filter(p => p.blocks.length).sort((x, y) => x.blocks[0].start - y.blocks[0].start);
+          return { date: '', ts: d.getTime(), people };
+        });
+        return ok({ week: b.week || 0, days });
+      }
       case 'uploadPhoto': return ok({ id: 'mock' + (++n) + 'xxxxxxxx' });
       case 'tasks': return ok(tasks);
       case 'clock': {

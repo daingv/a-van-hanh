@@ -234,22 +234,43 @@
   }
 
   // ---------- đăng nhập ----------
+  // Danh sách tên lưu sẵn trên máy (không có PIN) để mở app là chọn được ngay; vẫn tải bản mới ở nền.
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* bỏ qua */ } }
+  };
+  let loginToken = 0;
   async function viewLogin() {
-    render(brand(), spinner('đang tải danh sách…'));
+    const token = ++loginToken;
+    const last = store.get('a-last');
+    const draw = (names, loading) => {
+      if (token !== loginToken) return;
+      const sorted = last && names.includes(last) ? [last, ...names.filter(n => n !== last)] : names;
+      render(brand(), h('h3', { text: 'bạn là ai?' }),
+        h('div', { class: 'names' }, sorted.map(n => h('button', { class: n === last ? 'last' : '', onclick: () => viewPin(n) }, n))),
+        loading ? h('p', { class: 'hint', style: 'margin-top:14px' }, h('span', { class: 'spin' }), 'đang cập nhật danh sách…') : '');
+    };
+    const cached = store.get('a-names');
+    if (cached && cached.length) draw(cached, true);
+    else render(brand(), spinner('đang tải danh sách…'));
     let names;
     try { names = await api('staffList', {}, false); } catch (e) {
+      if (token !== loginToken) return;
+      if (cached && cached.length) { draw(cached, false); return; } // mất mạng: vẫn dùng danh sách cũ
       render(brand(), h('p', { class: 'alert bad', text: e.message }), h('button', { class: 'btn', onclick: viewLogin }, 'Thử lại'));
       return;
     }
+    if (token !== loginToken) return;
+    store.set('a-names', names);
     if (!names.length) {
       render(brand(), h('p', { class: 'alert', text: 'Chưa có nhân viên nào được đặt PIN. Chủ quán vào Sheet → menu (á) → Đặt PIN.' }));
       return;
     }
-    render(brand(), h('h3', { text: 'bạn là ai?' }),
-      h('div', { class: 'names' }, names.map(n => h('button', { onclick: () => viewPin(n) }, n))));
+    draw(names, false);
   }
 
   function viewPin(name) {
+    loginToken++; // bỏ lượt vẽ lại danh sách tên đang chờ
     let pin = '';
     const dots = h('div', { class: 'dots', 'aria-label': 'PIN' }, [0, 1, 2, 3, 4, 5].map(() => h('span')));
     const paint = () => [...dots.children].forEach((d, i) => d.classList.toggle('on', i < pin.length));
@@ -264,6 +285,7 @@
         msg.replaceChildren(h('span', { class: 'spin' }), 'đang kiểm tra…');
         try {
           await refreshInfo();
+          store.set('a-last', name);
           bumpIdle();
           viewHome();
         } catch (e) {
@@ -347,7 +369,8 @@
       parts.push(h('div', { class: 'sbox' },
         h('div', { class: 'stitle', text: 'ca tiếp theo' }),
         h('div', { class: 'sbig', text: `${dayLabel(n.start)} · ${n.codes} ${n.startHM}–${n.endHM}` }),
-        h('div', { class: 'hint', text: countdown(n.start) })));
+        h('div', { class: 'hint', text: countdown(n.start) }),
+        h('button', { class: 'linkbtn more', onclick: () => viewWeek(0) }, 'xem lịch cả tuần ›')));
     }
 
     // tháng này / tổng kết tháng trước
@@ -396,6 +419,7 @@
         item('chấm công', viewClock),
         openWindow ? item('báo cáo đầu ca', viewOpening) : null,
         item('báo cáo chốt ca', viewClosing),
+        item('lịch tuần', () => viewWeek(0)),
         item('báo phát sinh', () => viewSoon('báo phát sinh'), soon.cloneNode(true)),
         i.isHead ? item('duyệt công', viewApprovals, i.pendingApprovals ? h('span', { class: 'count', text: i.pendingApprovals }) : null) : null,
         h('hr'),
@@ -406,6 +430,43 @@
         h('hr'),
         !openWindow ? item('báo cáo đầu ca (ngoài giờ)', viewOpening) : null,
         item('đăng xuất', logout)));
+  }
+
+  // ---------- lịch tuần ----------
+  async function viewWeek(week) {
+    const seg = h('div', { class: 'seg', style: 'margin:4px 0 6px' }, ['tuần này', 'tuần sau'].map((t, k) =>
+      h('button', { type: 'button', class: k === week ? 'on' : '', onclick: () => k !== week && viewWeek(k) }, t)));
+    const body = h('div', null, spinner('đang tải lịch…'));
+    render(back(), h('h2', { class: 'title', text: 'lịch tuần' }), seg,
+      h('p', { class: 'hint', style: 'margin:6px 0 18px' }, h('span', { class: 'withdot' }), ' làm cùng giờ với bạn'), body);
+    let data;
+    try { data = await api('week', { week }); } catch (e) {
+      body.replaceChildren(h('p', { class: 'alert bad', text: e.message }), h('button', { class: 'btn', onclick: () => viewWeek(week) }, 'Thử lại'));
+      return;
+    }
+    if (!body.isConnected) return;
+    const today = day0(now());
+    const span = b => `${b.startHM}–${b.endHM}`;
+    let todayCard = null;
+    const cards = data.days.map(d => {
+      const mine = (d.people.find(p => p.me) || {}).blocks || [];
+      const overlaps = p => !p.me && p.blocks.some(b => mine.some(m => b.start < m.end && m.start < b.end));
+      const dt = new Date(d.ts);
+      const isToday = day0(d.ts) === today, past = day0(d.ts) < today;
+      const card = h('div', { class: 'sbox day' + (isToday ? ' today' : '') + (past ? ' past' : '') },
+        h('div', { class: 'stitle' }, `${WD[dt.getDay()]} ${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}`, isToday ? h('span', { class: 'scount', text: 'hôm nay' }) : ''),
+        h('div', { class: 'sbig' + (mine.length ? '' : ' off'), text: mine.length ? 'bạn: ' + mine.map(b => `${b.codes} ${span(b)}`).join(' và ') : 'bạn nghỉ' }),
+        d.people.length
+          ? h('ul', { class: 'roster' }, d.people.map(p => h('li', { class: (p.me ? 'me' : '') + (overlaps(p) ? ' with' : '') },
+              h('span', { class: 't', text: p.blocks.map(span).join(' · ') }),
+              h('span', { class: 'n', text: p.me ? 'bạn' : firstName(p.name) }),
+              h('span', { class: 'c', text: p.blocks.map(b => b.codes).join(' · ') }))))
+          : h('p', { class: 'hint', text: 'chưa xếp lịch' }));
+      if (isToday) todayCard = card;
+      return card;
+    });
+    body.replaceChildren(h('div', { class: 'summary' }, cards));
+    if (todayCard && todayCard !== cards[0]) todayCard.scrollIntoView({ block: 'start' });
   }
 
   function viewSoon(title) {
