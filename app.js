@@ -408,6 +408,20 @@
     const item = (label, fn, extra) => h('li', null, h('button', { onclick: fn }, label), extra);
     const soon = h('span', { class: 'soon', text: 'sắp có' });
     const panel = h('div', null, summaryPanel(i.summary));
+    const resend = h('div');
+    const resendItem = h('li', { hidden: true });
+    loadShare().then(rec => {
+      if (!rec || !resend.isConnected) return;
+      const open = () => viewShare(rec.r, rec.files || [], rec);
+      const left = [!rec.sent.text ? 'tin' : '', !rec.sent.photos && (rec.files || []).length ? 'ảnh' : ''].filter(Boolean);
+      if (left.length) {
+        resend.replaceChildren(h('div', { class: 'alert', style: 'margin-bottom:22px' },
+          h('div', { text: `${rec.title} lúc ${hm(new Date(rec.at))} chưa gửi ${left.join(' và ')} vào Zalo.` }),
+          h('button', { class: 'btn', style: 'margin-top:10px', onclick: open }, 'mở lại để gửi')));
+      }
+      resendItem.hidden = false;
+      resendItem.replaceChildren(h('button', { onclick: open }, 'gửi lại báo cáo gần nhất vào Zalo'));
+    });
     // lấy số mới nhất mỗi lần về trang chủ (sau khi chấm công, gửi báo cáo…), không chặn màn hình
     api('summary').then(sm => {
       i.summary = sm;
@@ -415,12 +429,14 @@
     }).catch(() => {});
     render(brand(),
       h('div', { class: 'greet' }, h('p', null, `chào ${firstName(i.name)} · ${WD[now().getDay()]} ${pad(now().getDate())}/${pad(now().getMonth() + 1)}`)),
+      resend,
       panel,
       h('ul', { class: 'menu' },
         item('chấm công', viewClock),
         openWindow ? item('báo cáo đầu ca', viewOpening) : null,
         item('báo cáo chốt ca', viewClosing),
         item('lịch tuần', () => viewWeek(0)),
+        resendItem,
         item('báo phát sinh', () => viewSoon('báo phát sinh'), soon.cloneNode(true)),
         i.isHead ? item('duyệt công', viewApprovals, i.pendingApprovals ? h('span', { class: 'count', text: i.pendingApprovals }) : null) : null,
         h('hr'),
@@ -621,6 +637,7 @@
         const files = Object.entries(store).filter(([k, v]) => v.id && (areas.includes(k) || k.startsWith('task:'))).map(([, v]) => v.file);
         await DB.del(key);
         S.info.pendingTasks = Math.max(0, S.info.pendingTasks - completedTasks(tasks, store).length);
+        await saveShare(r, files, 'báo cáo đầu ca');
         viewShare(r, files);
       } catch (e) { toast(e.message, true); submit.textContent = 'gửi báo cáo'; check(); }
     } }, 'gửi báo cáo');
@@ -894,6 +911,7 @@
         const files = Object.entries(store).filter(([k, v]) => v.id && v.file && !NO_ZALO.includes(k)).map(([, v]) => v.file);
         await DB.del(key);
         S.info.pendingTasks = Math.max(0, S.info.pendingTasks - payload.completed.length);
+        await saveShare(r, files, 'báo cáo chốt ca');
         viewShare(r, files);
       } catch (e) {
         toast(e.message, true);
@@ -932,9 +950,24 @@
   }
 
   // ---------- gửi Zalo (2 bước, đã thử trên iPhone) ----------
+  // Bản gửi Zalo gần nhất: thoát app giữa chừng vẫn mở lại được để gửi nốt tin / ảnh.
+  const shareKey = () => 'share:' + S.name;
+  async function saveShare(r, files, title) {
+    await DB.set(shareKey(), { r: { zaloText: r.zaloText, alert: !!r.alert }, files, title, at: Date.now(), sent: { text: false, photos: false } });
+  }
+  async function loadShare() {
+    const rec = await DB.get(shareKey());
+    if (!rec || Date.now() - rec.at > 24 * 3600e3) return null;
+    return rec;
+  }
+  async function markShare(part) {
+    const rec = await DB.get(shareKey());
+    if (rec) { rec.sent[part] = true; await DB.set(shareKey(), rec); }
+  }
+
   // Gửi vào Zalo 2 bước. Trên iPhone chọn Zalo thường chuyển hẳn sang app Zalo nên không biết được "đã gửi xong":
   // vì vậy nút ảnh luôn bấm được, không chờ bước 1.
-  function viewShare(r, files) {
+  function viewShare(r, files, again) {
     const canShare = !!navigator.share;
     const shareFiles = async (list, btn, doneText) => {
       if (!canShare) { toast('Máy này không chia sẻ ảnh được. Mở app bằng Safari trên iPhone.', true); return false; }
@@ -942,6 +975,7 @@
       if (navigator.canShare && !navigator.canShare(data)) throw new Error('máy không hỗ trợ chia sẻ nhóm ảnh này');
       const p = navigator.share(data);
       btn.classList.add('done'); btn.textContent = doneText; // bảng chia sẻ đã mở
+      if (list === files) markShare('photos');
       try { await p; } catch (e) { if (e.name === 'AbortError') { btn.classList.remove('done'); btn.textContent = btn.dataset.label; } throw e; }
       return true;
     };
@@ -954,7 +988,11 @@
         ...groups.map((g, k) => {
           const label = `ảnh ${k * size + 1}–${k * size + g.length}`;
           const b = h('button', { class: 'btn ghost', 'data-label': label }, label);
-          b.addEventListener('click', () => shareFiles(g, b, label + ' ✓').catch(e => { if (e.name !== 'AbortError') toast('Không gửi được: ' + e.message, true); }));
+          b.addEventListener('click', () => {
+            const p = shareFiles(g, b, label + ' ✓');
+            if ([...batches.querySelectorAll('button')].every(x => x.classList.contains('done'))) markShare('photos');
+            p.catch(e => { if (e.name !== 'AbortError') toast('Không gửi được: ' + e.message, true); });
+          });
           return b;
         }));
     }
@@ -978,14 +1016,17 @@
       }
       const p = navigator.share({ text: r.zaloText });
       b1.classList.add('done'); b1.textContent = '1. đã mở chia sẻ tin ✓';
+      markShare('text');
       try { await p; } catch (e) {
         if (e.name === 'AbortError') { b1.classList.remove('done'); b1.textContent = b1Label; }
         else toast('Không mở được chia sẻ: ' + e.message, true);
       }
     });
     render(
-      h('div', { class: 'big-ok', text: 'đã gửi ✓' }),
-      h('p', { class: 'sub', text: 'Báo cáo đã lưu. Giờ gửi vào nhóm á daily report.' }),
+      again ? h('h2', { class: 'title', text: 'gửi lại vào Zalo' }) : h('div', { class: 'big-ok', text: 'đã gửi ✓' }),
+      h('p', { class: 'sub', text: again
+        ? `${again.title} lúc ${hm(new Date(again.at))} đã lưu trên Sheet. Gửi nốt phần còn thiếu vào nhóm á daily report.`
+        : 'Báo cáo đã lưu. Giờ gửi vào nhóm á daily report.' }),
       r.alert ? h('div', { class: 'alert bad', text: 'Két lệch lớn: nhắn riêng head-barista hoặc chủ quán ngay.' }) : null,
       h('pre', { class: 'msg', text: r.zaloText }),
       b1, b2, batches,
