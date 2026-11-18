@@ -8,7 +8,8 @@
     th: { note: 20000, comp: 100000, alert: 200000 }, aft: '15:00', eve: '20:00', openFrom: '07:00', openTo: '10:30'
   };
   let open = {};
-  let tasks = [{ id: 't1', text: 'nấu 2 nồi trân châu', from: 'Hoàng Ngọc Tú', at: Date.now() - 3 * 3600e3 }];
+  let tasks = [{ id: 't1', text: 'nấu 2 nồi trân châu', from: 'Hoàng Ngọc Tú', at: Date.now() - 3 * 3600e3, to: ['Nguyễn Trâm Anh', 'Đoàn Hạnh Nguyên'] },
+    { id: 't2', text: 'lau tủ mát', from: 'Hoàng Ngọc Tú', at: Date.now() - 3 * 3600e3, to: [] }];
   let approvals = [{ id: 'c1', date: '2026-11-17', name: 'Hoàng Ngọc Tú', shift: 'C', inTime: Date.now() - 26 * 3600e3,
     outTime: null, flags: 'không có vị trí; quên chấm ra', selfieIn: null, selfieOut: null }];
   let n = 0;
@@ -49,7 +50,7 @@
       case 'login':
         return ok({ name: b.name, role: staff[b.name], isHead, serverNow: Date.now(),
           shifts: [{ code: 'FT1', start: '08:00', end: '16:00' }], openSince: open[b.name] || null,
-          pendingTasks: tasks.length, pendingApprovals: isHead ? approvals.length : 0, cfg, summary: summary(b.name, isHead) });
+          pendingTasks: tasks.length, pendingApprovals: isHead ? approvals.length : 0, cfg, staff: Object.keys(staff), summary: summary(b.name, isHead) });
       case 'summary': return ok(summary(b.name, isHead));
       case 'week': {
         const mon = new Date(); mon.setHours(0, 0, 0, 0); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7) + 7 * (b.week || 0));
@@ -72,7 +73,7 @@
         return ok({ week: b.week || 0, days });
       }
       case 'uploadPhoto': return ok({ id: 'mock' + (++n) + 'xxxxxxxx' });
-      case 'tasks': return ok(tasks);
+      case 'tasks': return ok(tasks.filter(t => !t.to.length || t.to.includes(b.name)));
       case 'clock': {
         const t = Date.now();
         if (b.type === 'in') open[b.name] = t; else delete open[b.name];

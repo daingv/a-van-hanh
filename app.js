@@ -290,6 +290,7 @@
           viewHome();
         } catch (e) {
           S.name = S.pin = null;
+          if (/Không tìm thấy tên/.test(e.message)) { try { localStorage.removeItem('a-names'); } catch (x) { /* bỏ qua */ } }
           pin = ''; paint();
           msg.textContent = e.message;
           msg.className = 'hint bad';
@@ -437,8 +438,7 @@
     const seg = h('div', { class: 'seg', style: 'margin:4px 0 6px' }, ['tuần này', 'tuần sau'].map((t, k) =>
       h('button', { type: 'button', class: k === week ? 'on' : '', onclick: () => k !== week && viewWeek(k) }, t)));
     const body = h('div', null, spinner('đang tải lịch…'));
-    render(back(), h('h2', { class: 'title', text: 'lịch tuần' }), seg,
-      h('p', { class: 'hint', style: 'margin:6px 0 18px' }, h('span', { class: 'withdot' }), ' làm cùng giờ với bạn'), body);
+    render(back(), h('h2', { class: 'title', text: 'lịch tuần' }), seg, h('div', { style: 'height:14px' }), body);
     let data;
     try { data = await api('week', { week }); } catch (e) {
       body.replaceChildren(h('p', { class: 'alert bad', text: e.message }), h('button', { class: 'btn', onclick: () => viewWeek(week) }, 'Thử lại'));
@@ -446,22 +446,49 @@
     }
     if (!body.isConnected) return;
     const today = day0(now());
-    const span = b => `${b.startHM}–${b.endHM}`;
+    // giờ dạng 8h, 16h30
+    const hh = min => Math.floor(min / 60) + 'h' + (min % 60 ? pad(min % 60) : '');
+    const periods = data.periods || [{ label: 'sáng', start: 480, end: 780 }, { label: 'chiều', start: 780, end: 1080 }, { label: 'tối', start: 1080, end: 1380 }];
+    // Một buổi: ai có mặt, ghi chú "từ 13h" / "tới 16h" khi không làm trọn buổi.
+    function periodLine(d, P, k) {
+      const first = k === 0, last = k === periods.length - 1;
+      const lo = first ? 0 : P.start, hi = last ? 1440 : P.end;
+      const groups = new Map();
+      d.people.forEach(p => {
+        const mins = p.blocks.map(b => [(b.start - d.ts) / 60000, (b.end - d.ts) / 60000]).filter(([a, z]) => a < hi && z > lo);
+        if (!mins.length) return;
+        let a = Math.min(...mins.map(x => x[0])), z = Math.max(...mins.map(x => x[1]));
+        if (!first) a = Math.max(a, P.start);
+        if (!last) z = Math.min(z, P.end);
+        const from = a !== P.start && (a > P.start || first), to = z !== P.end && (z < P.end || last);
+        const note = from && to ? `${hh(a)}–${hh(z)}` : from ? 'từ ' + hh(a) : to ? 'tới ' + hh(z) : '';
+        if (!groups.has(note)) groups.set(note, []);
+        groups.get(note).push(p);
+      });
+      if (!groups.size) return null;
+      const order = [...groups.keys()].sort((x, y) => (x === '' ? -1 : y === '' ? 1 : 0));
+      const parts = [];
+      order.forEach((note, i) => {
+        if (i) parts.push(h('span', { class: 'sep', text: ' · ' }));
+        groups.get(note).forEach((p, j) => {
+          if (j) parts.push(', ');
+          parts.push(p.me ? h('strong', { class: 'me', text: 'bạn' }) : firstName(p.name));
+        });
+        if (note) parts.push(h('span', { class: 'note', text: ' ' + note }));
+      });
+      return h('li', null, h('span', { class: 'p', text: P.label }), h('span', { class: 'who' }, parts));
+    }
     let todayCard = null;
     const cards = data.days.map(d => {
       const mine = (d.people.find(p => p.me) || {}).blocks || [];
-      const overlaps = p => !p.me && p.blocks.some(b => mine.some(m => b.start < m.end && m.start < b.end));
       const dt = new Date(d.ts);
       const isToday = day0(d.ts) === today, past = day0(d.ts) < today;
+      const lines = periods.map((P, k) => periodLine(d, P, k)).filter(Boolean);
+      const mineTxt = mine.map(b => `${hh((b.start - d.ts) / 60000)}–${hh((b.end - d.ts) / 60000)}`).join(' và ');
       const card = h('div', { class: 'sbox day' + (isToday ? ' today' : '') + (past ? ' past' : '') },
-        h('div', { class: 'stitle' }, `${WD[dt.getDay()]} ${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}`, isToday ? h('span', { class: 'scount', text: 'hôm nay' }) : ''),
-        h('div', { class: 'sbig' + (mine.length ? '' : ' off'), text: mine.length ? 'bạn: ' + mine.map(b => `${b.codes} ${span(b)}`).join(' và ') : 'bạn nghỉ' }),
-        d.people.length
-          ? h('ul', { class: 'roster' }, d.people.map(p => h('li', { class: (p.me ? 'me' : '') + (overlaps(p) ? ' with' : '') },
-              h('span', { class: 't', text: p.blocks.map(span).join(' · ') }),
-              h('span', { class: 'n', text: p.me ? 'bạn' : firstName(p.name) }),
-              h('span', { class: 'c', text: p.blocks.map(b => b.codes).join(' · ') }))))
-          : h('p', { class: 'hint', text: 'chưa xếp lịch' }));
+        h('div', { class: 'stitle' }, `${WD[dt.getDay()]} · ${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}`, isToday ? h('span', { class: 'scount', text: 'hôm nay' }) : ''),
+        h('div', { class: 'mine' + (mine.length ? '' : ' off'), text: mine.length ? 'bạn làm ' + mineTxt : 'bạn nghỉ' }),
+        lines.length ? h('ul', { class: 'shifts' }, lines) : h('p', { class: 'hint', text: 'chưa xếp lịch' }));
       if (isToday) todayCard = card;
       return card;
     });
@@ -529,17 +556,41 @@
   }
 
   // ---------- bàn giao (dùng chung đầu ca / chốt ca) ----------
+  // Việc được bàn giao: chụp ảnh kết quả = xong; hoặc bấm "không làm" + ghi lý do (giao sai / không làm được) = đóng việc kèm giải trình.
   function taskList(tasks, store, onChange) {
-    if (!tasks.length) return h('p', { class: 'hint', text: 'Không có việc nào được giao.' });
-    return h('div', null, tasks.map(t => h('div', { class: 'card' },
-      h('div', { text: t.text }),
-      h('div', { class: 'meta', text: `${t.from} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''} · chụp ảnh kết quả là hoàn thành` }),
-      h('div', { class: 'photos', style: 'margin-top:10px' },
-        photoSlot(store, 'task:' + t.id, 'việc: ' + t.text.slice(0, 40), { onChange })))));
+    if (!tasks.length) return h('p', { class: 'hint', text: 'Không có việc nào giao cho bạn.' });
+    return h('div', null, tasks.map(t => {
+      const sk = store['skip:' + t.id] || (store['skip:' + t.id] = { on: false, reason: '' });
+      const body = h('div');
+      const toggle = h('button', { class: 'linkbtn more', type: 'button' });
+      const draw = () => {
+        toggle.textContent = sk.on ? '‹ quay lại, mình sẽ làm việc này' : 'không làm việc này (giao sai / không làm được)';
+        if (sk.on) {
+          const ta = h('textarea', { placeholder: 'ghi lý do, ví dụ: trân châu còn đủ, không cần nấu', value: sk.reason });
+          ta.addEventListener('input', () => { sk.reason = ta.value; onChange(); });
+          body.replaceChildren(h('label', { class: 'f', text: 'lý do không làm (bắt buộc)' }), ta);
+        } else {
+          body.replaceChildren(h('div', { class: 'photos', style: 'margin-top:10px' },
+            photoSlot(store, 'task:' + t.id, 'việc: ' + t.text.slice(0, 40), { onChange })));
+        }
+      };
+      toggle.addEventListener('click', () => { sk.on = !sk.on; draw(); onChange(); });
+      draw();
+      const toTxt = t.to && t.to.length ? ' · cho ' + t.to.map(firstName).join(', ') : ' · cho cả ca sau';
+      return h('div', { class: 'card' },
+        h('div', { text: t.text }),
+        h('div', { class: 'meta', text: `${firstName(t.from)} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''}${toTxt}` }),
+        body, toggle);
+    }));
   }
-  const completedTasks = (tasks, store) => tasks
-    .filter(t => store['task:' + t.id] && store['task:' + t.id].id)
-    .map(t => ({ id: t.id, photoId: store['task:' + t.id].id }));
+  const skipOf = (store, t) => { const sk = store['skip:' + t.id]; return sk && sk.on ? sk : null; };
+  const completedTasks = (tasks, store) => tasks.map(t => {
+    const sk = skipOf(store, t);
+    if (sk) return sk.reason.trim().length >= 5 ? { id: t.id, skip: sk.reason.trim() } : null;
+    return store['task:' + t.id] && store['task:' + t.id].id ? { id: t.id, photoId: store['task:' + t.id].id } : null;
+  }).filter(Boolean);
+  const skipLacking = (tasks, store) => tasks.filter(t => { const sk = skipOf(store, t); return sk && sk.reason.trim().length < 5; })
+    .map(t => 'lý do không làm: ' + t.text.slice(0, 30));
 
   // ---------- báo cáo đầu ca ----------
   async function viewOpening() {
@@ -554,9 +605,9 @@
     const missing = h('p', { class: 'missing' });
     const save = () => DB.set(key, { photos: store, note: note.value });
     const check = () => {
-      const lack = areas.filter(a => !(store[a] && store[a].id));
+      const lack = areas.filter(a => !(store[a] && store[a].id)).map(a => 'ảnh ' + a).concat(skipLacking(tasks, store));
       const uploading = Object.values(store).some(p => p.file && !p.id);
-      missing.textContent = lack.length ? `còn thiếu ${lack.length} ảnh: ${lack.join(', ')}` : uploading ? 'đang tải ảnh…' : '';
+      missing.textContent = lack.length ? `còn thiếu ${lack.length} mục: ${lack.join(', ')}` : uploading ? 'đang tải ảnh…' : '';
       submit.disabled = lack.length > 0 || uploading;
       save();
     };
@@ -594,7 +645,7 @@
     const items = c.stock.filter(s => s.scope === 'cả hai' || (evening ? s.scope === 'tối' : s.scope === 'ngày'));
     const key = draftKey('chot-ca');
     const saved = (await DB.get(key)) || {};
-    const F = Object.assign({ money: {}, explains: [], reason: '', stock: {}, others: [], handover: [{ text: '' }], incident: '', note: '' }, saved.F || {});
+    const F = Object.assign({ money: {}, explains: [], reason: '', stock: {}, others: [], handover: [{ text: '', to: [] }], incident: '', note: '' }, saved.F || {});
     const store = saved.photos || {};
     delete store['két tiền']; delete store['lịch sử ngân hàng']; // bản nháp từ bản cũ
     const save = () => DB.set(key, { F, photos: store });
@@ -712,12 +763,24 @@
       }));
     }
     const handWrap = h('div');
+    const staffNames = S.info.staff || [];
     function drawHand() {
       handWrap.replaceChildren(...F.handover.map(t => {
         const inp = h('input', { type: 'text', placeholder: 'ví dụ: nấu 2 nồi trân châu', value: t.text });
         inp.addEventListener('input', () => { t.text = inp.value; save(); });
-        return h('div', { class: 'row', style: 'margin:8px 0' }, h('div', { class: 'grow' }, inp),
-          h('button', { class: 'x', type: 'button', 'aria-label': 'xoá', onclick: () => { F.handover.splice(F.handover.indexOf(t), 1); drawHand(); save(); } }, '×'));
+        t.to = Array.isArray(t.to) ? t.to.filter(n => staffNames.includes(n)) : [];
+        const who = h('div', { class: 'chips' });
+        const drawWho = () => who.replaceChildren(
+          h('span', { class: 'hint', text: 'giao cho:' }),
+          ...staffNames.filter(n => n !== S.name).map(n => h('button', { type: 'button', class: 'chip' + (t.to.includes(n) ? ' on' : ''),
+            'aria-pressed': t.to.includes(n) ? 'true' : 'false',
+            onclick: () => { t.to = t.to.includes(n) ? t.to.filter(x => x !== n) : t.to.concat(n); drawWho(); save(); } }, firstName(n))),
+          h('span', { class: 'hint', text: t.to.length ? '' : '(chưa chọn ai = ai ca sau cũng làm)' }));
+        drawWho();
+        return h('div', { class: 'card', style: 'margin:8px 0' },
+          h('div', { class: 'row' }, h('div', { class: 'grow' }, inp),
+            h('button', { class: 'x', type: 'button', 'aria-label': 'xoá', onclick: () => { F.handover.splice(F.handover.indexOf(t), 1); drawHand(); save(); } }, '×')),
+          who);
       }));
     }
 
@@ -741,7 +804,7 @@
       if (cc && cc.needReason && !F.reason.trim()) out.push('lý do lệch');
       moneyPhotos.concat(c.areas).forEach(a => { if (!(store[a] && store[a].id)) out.push('ảnh ' + a); });
       items.forEach(it => { if (F.stock[it.name].left === '') out.push('tồn ' + it.name); });
-      return out;
+      return out.concat(skipLacking(tasks, store));
     }
 
     function update() {
@@ -790,7 +853,7 @@
           stock: Object.fromEntries(items.map(it => [it.name, { left: F.stock[it.name].left, refill: evening && F.stock[it.name].on ? F.stock[it.name].refill : '' }])),
           completed: completedTasks(tasks, store),
           others: F.others.filter(o => o.text.trim()).map(o => ({ text: o.text, photoId: store[o.k] && store[o.k].id })),
-          handover: F.handover.filter(t => t.text.trim()).map(t => ({ text: t.text })),
+          handover: F.handover.filter(t => t.text.trim()).map(t => ({ text: t.text, to: t.to || [] })),
           incident: F.incident, note: F.note,
         };
         const r = await api('submitClosing', payload);
@@ -831,7 +894,7 @@
       h('h3', { text: 'việc khác đã làm' }), othersWrap,
       h('button', { class: 'add', type: 'button', onclick: () => { F.others.push({ text: '' }); drawOthers(); save(); } }, '+ thêm việc khác'),
       h('h3', { text: 'giao việc cho ca sau' }), handWrap,
-      h('button', { class: 'add', type: 'button', onclick: () => { F.handover.push({ text: '' }); drawHand(); save(); } }, '+ thêm việc'),
+      h('button', { class: 'add', type: 'button', onclick: () => { F.handover.push({ text: '', to: [] }); drawHand(); save(); } }, '+ thêm việc'),
       h('h3', { text: 'sự cố' }), incident,
       h('h3', { text: 'ghi chú' }), note,
       missing, submit);

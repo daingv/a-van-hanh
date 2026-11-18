@@ -193,3 +193,20 @@ pre.msg { white-space: pre-wrap; background: var(--card); border: 1px solid var(
 .roster li.me .t { color: var(--ink); }
 .roster li.with { border-left-color: var(--ok); }
 .withdot { display: inline-block; width: 3px; height: 14px; background: var(--ok); vertical-align: -2px; margin-right: 4px; }
+
+/* giao việc cho người cụ thể */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.chip { font: inherit; font-size: 15px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+.chip.on { background: var(--ink); border-color: var(--ink); color: var(--on-accent); }
+
+/* lịch tuần theo buổi */
+.sbox.day .mine { font-size: 16px; color: var(--ink-strong); margin: 2px 0 8px; }
+.sbox.day .mine.off { color: var(--muted); }
+.shifts { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.shifts li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); line-height: 1.45; }
+.shifts li:last-child { border-bottom: 0; padding-bottom: 0; }
+.shifts .p { color: var(--muted); font-size: 14px; }
+.shifts .who { color: var(--ink-strong); overflow-wrap: anywhere; }
+.shifts .note { color: var(--muted); font-size: 14px; }
+.shifts .sep { color: var(--muted); }
+.shifts strong.me { font-weight: 700; }
