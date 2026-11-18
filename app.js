@@ -932,37 +932,64 @@
   }
 
   // ---------- gửi Zalo (2 bước, đã thử trên iPhone) ----------
+  // Gửi vào Zalo 2 bước. Trên iPhone chọn Zalo thường chuyển hẳn sang app Zalo nên không biết được "đã gửi xong":
+  // vì vậy nút ảnh luôn bấm được, không chờ bước 1.
   function viewShare(r, files) {
     const canShare = !!navigator.share;
-    const b2 = h('button', { class: 'btn', disabled: true }, `2. gửi ${files.length} ảnh vào Zalo`);
-    const b1 = h('button', { class: 'btn', onclick: async () => {
+    const shareFiles = async (list, btn, doneText) => {
+      if (!canShare) { toast('Máy này không chia sẻ ảnh được. Mở app bằng Safari trên iPhone.', true); return false; }
+      const data = { files: list };
+      if (navigator.canShare && !navigator.canShare(data)) throw new Error('máy không hỗ trợ chia sẻ nhóm ảnh này');
+      const p = navigator.share(data);
+      btn.classList.add('done'); btn.textContent = doneText; // bảng chia sẻ đã mở
+      try { await p; } catch (e) { if (e.name === 'AbortError') { btn.classList.remove('done'); btn.textContent = btn.dataset.label; } throw e; }
+      return true;
+    };
+    // gửi cả loạt bị lỗi → chia thành từng đợt 5 ảnh
+    const batches = h('div');
+    function showBatches() {
+      const size = 5, groups = [];
+      for (let i = 0; i < files.length; i += size) groups.push(files.slice(i, i + size));
+      batches.replaceChildren(h('p', { class: 'hint', text: 'Gửi lần lượt từng đợt ảnh:' }),
+        ...groups.map((g, k) => {
+          const label = `ảnh ${k * size + 1}–${k * size + g.length}`;
+          const b = h('button', { class: 'btn ghost', 'data-label': label }, label);
+          b.addEventListener('click', () => shareFiles(g, b, label + ' ✓').catch(e => { if (e.name !== 'AbortError') toast('Không gửi được: ' + e.message, true); }));
+          return b;
+        }));
+    }
+    const b2Label = `2. gửi ${files.length} ảnh vào Zalo`;
+    const b2 = h('button', { class: 'btn', disabled: !files.length, 'data-label': b2Label }, b2Label);
+    b2.addEventListener('click', async () => {
+      try { await shareFiles(files, b2, '2. đã mở chia sẻ ảnh ✓'); }
+      catch (e) {
+        if (e.name === 'AbortError') return;
+        toast('Gửi cả loạt không được, thử gửi từng đợt bên dưới.', true);
+        showBatches();
+      }
+    });
+    const b1Label = '1. gửi tin vào Zalo';
+    const b1 = h('button', { class: 'btn', 'data-label': b1Label }, b1Label);
+    b1.addEventListener('click', async () => {
       if (!canShare) {
         try { await navigator.clipboard.writeText(r.zaloText); toast('Đã chép tin. Dán vào Zalo.'); } catch (e) { toast('Hãy chép tin ở trên', true); }
-        b1.classList.add('done'); b2.disabled = !files.length;
+        b1.classList.add('done');
         return;
       }
-      try {
-        await navigator.share({ text: r.zaloText });
-        b1.classList.add('done'); b1.textContent = '1. đã gửi tin ✓';
-        b2.disabled = !files.length;
-      } catch (e) { if (e.name !== 'AbortError') toast('Không mở được chia sẻ: ' + e.message, true); }
-    } }, '1. gửi tin vào Zalo');
-    b2.addEventListener('click', async () => {
-      if (!canShare) { toast('Máy này không chia sẻ ảnh được', true); return; }
-      try {
-        const data = { files };
-        if (navigator.canShare && !navigator.canShare(data)) throw new Error('máy không hỗ trợ chia sẻ ảnh');
-        await navigator.share(data);
-        b2.classList.add('done'); b2.textContent = '2. đã gửi ảnh ✓';
-      } catch (e) { if (e.name !== 'AbortError') toast('Không gửi được ảnh: ' + e.message, true); }
+      const p = navigator.share({ text: r.zaloText });
+      b1.classList.add('done'); b1.textContent = '1. đã mở chia sẻ tin ✓';
+      try { await p; } catch (e) {
+        if (e.name === 'AbortError') { b1.classList.remove('done'); b1.textContent = b1Label; }
+        else toast('Không mở được chia sẻ: ' + e.message, true);
+      }
     });
     render(
       h('div', { class: 'big-ok', text: 'đã gửi ✓' }),
       h('p', { class: 'sub', text: 'Báo cáo đã lưu. Giờ gửi vào nhóm á daily report.' }),
       r.alert ? h('div', { class: 'alert bad', text: 'Két lệch lớn: nhắn riêng head-barista hoặc chủ quán ngay.' }) : null,
       h('pre', { class: 'msg', text: r.zaloText }),
-      b1, b2,
-      h('p', { class: 'hint', text: 'Gửi tin trước, quay lại đây gửi ảnh sau. Chọn đúng nhóm ở cả hai bước.' }),
+      b1, b2, batches,
+      h('p', { class: 'hint', text: 'Gửi tin trước, quay lại app này rồi bấm gửi ảnh. Chọn đúng nhóm ở cả hai bước.' }),
       h('button', { class: 'btn ghost', onclick: viewHome }, 'xong, về trang chính'));
   }
 
