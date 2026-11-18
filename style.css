@@ -210,3 +210,9 @@ pre.msg { white-space: pre-wrap; background: var(--card); border: 1px solid var(
 .shifts .note { color: var(--muted); font-size: 14px; }
 .shifts .sep { color: var(--muted); }
 .shifts strong.me { font-weight: 700; }
+
+/* giải trình nằm ngay trong ô lệch */
+.cash .exrows:not(:empty) { margin-top: 10px; }
+.cash .exrow { padding: 12px 0; border-top: 1px dashed var(--line); }
+.cash .exrow .chips { margin-top: 8px; }
+.cash .exadd { margin: 6px 0 4px; }
