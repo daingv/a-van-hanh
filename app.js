@@ -289,22 +289,109 @@
   }
 
   // ---------- trang chính ----------
+  // ---------- bảng tóm tắt trang chủ ----------
+  const WD = ['Chủ nhật', 'thứ Hai', 'thứ Ba', 'thứ Tư', 'thứ Năm', 'thứ Sáu', 'thứ Bảy'];
+  const dur = min => { min = Math.max(0, Math.round(min)); const g = Math.floor(min / 60), p = min % 60; return g ? `${g} giờ${p ? ' ' + p + ' phút' : ''}` : `${p} phút`; };
+  const day0 = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime(); };
+  function dayLabel(ts) {
+    const diff = Math.round((day0(ts) - day0(now())) / 86400000);
+    const d = new Date(ts);
+    if (diff === 0) return 'hôm nay';
+    if (diff === 1) return 'ngày mai';
+    if (diff === -1) return 'hôm qua';
+    return `${WD[d.getDay()]} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+  }
+  function countdown(ts) {
+    const min = Math.round((ts - now().getTime()) / 60000);
+    if (min <= 0) return 'đang tới giờ';
+    if (min < 60) return `còn ${min} phút`;
+    if (min < 48 * 60) return `còn ${dur(min)}`;
+    return `còn ${Math.round(min / 1440)} ngày`;
+  }
+
+  function summaryPanel(sm) {
+    if (!sm) return h('div');
+    const t = sm.today, b = t.block, mo = sm.month;
+    const row = (k, v, cls) => h('div', { class: 'srow' }, h('span', { class: 'k', text: k }), h('span', { class: 'v' + (cls ? ' ' + cls : ''), text: v }));
+    const parts = [];
+
+    // ca hôm nay
+    const todayBox = [h('div', { class: 'stitle', text: 'ca hôm nay' })];
+    if (b) {
+      todayBox.push(h('div', { class: 'sbig', text: `${b.codes} · ${b.startHM}–${b.endHM}` }));
+      if (t.clock.state === 'in') todayBox.push(h('div', { class: 'ok', text: `● đang trong ca từ ${hm(new Date(t.clock.since))} · ${dur(t.workedMin)}` }));
+      else if (t.clock.state === 'late') todayBox.push(h('div', { class: 'warn', text: `⚠ đã tới giờ ca (${b.startHM}) nhưng chưa chấm vào` }));
+      else if (b.start > now().getTime()) todayBox.push(h('div', { class: 'hint', text: `bắt đầu ${b.startHM} · ${countdown(b.start)}` }));
+      else if (t.workedMin) todayBox.push(h('div', { class: 'hint', text: `đã làm hôm nay: ${dur(t.workedMin)}` }));
+    } else {
+      todayBox.push(h('div', { class: 'sbig', text: 'hôm nay bạn nghỉ' }));
+      if (t.clock.state === 'in') todayBox.push(h('div', { class: 'ok', text: `● đang trong ca từ ${hm(new Date(t.clock.since))} · ${dur(t.workedMin)}` }));
+    }
+    if (t.mates.length) todayBox.push(h('div', { class: 'hint', text: 'đang trong ca: ' + t.mates.map(firstName).join(', ') }));
+    parts.push(h('div', { class: 'sbox' }, ...todayBox));
+
+    // việc trong ca
+    if (t.items.length) {
+      const done = t.items.filter(x => x.done).length;
+      parts.push(h('div', { class: 'sbox' },
+        h('div', { class: 'stitle' }, 'việc trong ca', h('span', { class: 'scount', text: `${done}/${t.items.length}` })),
+        h('div', { class: 'bar' }, h('i', { style: `width:${Math.round(100 * done / t.items.length)}%` })),
+        h('ul', { class: 'checks' }, t.items.map(x => h('li', { class: x.done ? 'done' : '' },
+          h('span', { class: 'mark', text: x.done ? '✓' : '○' }),
+          h('span', null, x.text, x.note ? h('small', { text: ' · ' + x.note }) : ''))))));
+    }
+
+    // ca tiếp theo
+    if (sm.next) {
+      const n = sm.next;
+      parts.push(h('div', { class: 'sbox' },
+        h('div', { class: 'stitle', text: 'ca tiếp theo' }),
+        h('div', { class: 'sbig', text: `${dayLabel(n.start)} · ${n.codes} ${n.startHM}–${n.endHM}` }),
+        h('div', { class: 'hint', text: countdown(n.start) })));
+    }
+
+    // tháng này / tổng kết tháng trước
+    parts.push(h('div', { class: 'sbox' },
+      h('div', { class: 'stitle', text: mo.recap ? `tổng kết ${mo.label}` : mo.label }),
+      row('số buổi · giờ công', `${mo.days} buổi · ${dur(mo.minutes)}`),
+      mo.nightMinutes ? row('sau 23h', dur(mo.nightMinutes)) : '',
+      row('đi muộn', mo.late ? `${mo.late} lần · ${mo.lateMin} phút` : 'không', mo.late ? 'warn' : 'ok'),
+      row('về sớm', mo.early ? `${mo.early} lần · ${mo.earlyMin} phút` : 'không', mo.early ? 'warn' : 'ok'),
+      row('quên chấm ra', mo.forgot ? `${mo.forgot} lần` : 'không', mo.forgot ? 'warn' : 'ok'),
+      mo.pending ? row('lượt đang chờ duyệt', String(mo.pending), 'warn') : ''));
+
+    // cả quán hôm nay (head-barista / chủ quán)
+    if (sm.team) {
+      const tm = sm.team, lc = tm.lastClosing;
+      const lech = (label, d, u) => `${label} ${diffText(d)}` +
+        (!d ? '' : !u ? ' (đã giải trình)' : u === d ? ' (chưa giải trình)' : ` (còn ${diffText(u)} chưa giải trình)`);
+      const lcText = !lc ? 'chưa có' : `ca ${lc.shift} ${dayLabel(lc.at)} ${hm(new Date(lc.at))} · ${firstName(lc.by)} · ` +
+        lech('két', lc.diffCash, lc.uCash) + ' · ' + lech('CK', lc.diffBank, lc.uBank);
+      parts.push(h('div', { class: 'sbox' },
+        h('div', { class: 'stitle', text: 'cả quán hôm nay' }),
+        row('báo cáo đầu ca', tm.openingDone ? 'đã có ✓' : 'chưa có', tm.openingDone ? 'ok' : 'warn'),
+        row('tới giờ chưa chấm vào', tm.notIn.length ? tm.notIn.map(x => `${firstName(x.name)} (${x.start})`).join(', ') : 'không', tm.notIn.length ? 'warn' : 'ok'),
+        h('div', { class: 'hint', style: 'margin-top:6px', text: 'chốt ca gần nhất: ' + lcText })));
+    }
+    return h('div', { class: 'summary' }, ...parts);
+  }
+
   function viewHome() {
     const i = S.info;
     const c = i.cfg;
     const m = now().getHours() * 60 + now().getMinutes();
     const openWindow = m >= hmToMin(c.openFrom) && m <= hmToMin(c.openTo);
-    const shiftTxt = i.shifts.length ? i.shifts.map(s => `${s.code} ${s.start}–${s.end}`).join(', ') : 'không có ca trong lịch';
-    const todos = [];
-    if (!i.openSince) todos.push('chưa chấm vào ca');
-    if (i.pendingTasks) todos.push(`có ${i.pendingTasks} việc được bàn giao`);
     const item = (label, fn, extra) => h('li', null, h('button', { onclick: fn }, label), extra);
     const soon = h('span', { class: 'soon', text: 'sắp có' });
+    const panel = h('div', null, summaryPanel(i.summary));
+    // lấy số mới nhất mỗi lần về trang chủ (sau khi chấm công, gửi báo cáo…), không chặn màn hình
+    api('summary').then(sm => {
+      i.summary = sm;
+      if (panel.isConnected) panel.replaceChildren(summaryPanel(sm));
+    }).catch(() => {});
     render(brand(),
-      h('div', { class: 'greet' },
-        h('p', null, `chào ${firstName(i.name)} · ca hôm nay: ${shiftTxt}`),
-        i.openSince ? h('p', { class: 'hint ok', text: `đang trong ca từ ${hm(new Date(i.openSince))}` }) : null,
-        todos.length ? h('p', { class: 'todo', text: '· ' + todos.join(' · ') }) : null),
+      h('div', { class: 'greet' }, h('p', null, `chào ${firstName(i.name)} · ${WD[now().getDay()]} ${pad(now().getDate())}/${pad(now().getMonth() + 1)}`)),
+      panel,
       h('ul', { class: 'menu' },
         item('chấm công', viewClock),
         openWindow ? item('báo cáo đầu ca', viewOpening) : null,

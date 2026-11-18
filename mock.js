@@ -17,6 +17,29 @@
   const err = e => ({ ok: false, error: e });
   const fmt = v => String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + 'đ';
 
+  const summary = (name, isHead) => {
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const at = (dayOff, h, m) => d0.getTime() + dayOff * 864e5 + (h * 60 + (m || 0)) * 6e4;
+    const hh = x => String(x).padStart(2, '0') + ':00';
+    const blk = (dayOff, s, e, codes) => ({ date: '', start: at(dayOff, s), end: at(dayOff, e), startHM: hh(s), endHM: hh(e), codes });
+    const since = open[name] || null;
+    const inNow = !!since;
+    const out = {
+      now: Date.now(),
+      today: { block: blk(0, 8, 16, 'FT1'), clock: inNow ? { state: 'in', since } : { state: 'out' },
+        workedMin: inNow ? Math.round((Date.now() - since) / 6e4) : 0, mates: ['Nguyễn Trâm Anh'],
+        items: [{ text: 'chấm vào', done: inNow }, { text: 'báo cáo đầu ca', note: cfg.openFrom + '–' + cfg.openTo, done: true },
+          ...tasks.map(t => ({ text: t.text, note: 'bàn giao', done: false })),
+          { text: 'báo cáo chốt ca', note: 'người giữ két · khoảng 15:30', done: false }, { text: 'chấm ra', done: false }] },
+      next: blk(1, 15, 23, 'C+T'),
+      month: { label: 'tháng ' + (new Date().getMonth() + 1), recap: new Date().getDate() === 1, days: 14, minutes: 6420, nightMinutes: 95,
+        late: 2, lateMin: 17, early: 0, earlyMin: 0, forgot: 1, pending: 0 }
+    };
+    if (isHead) out.team = { openingDone: true, notIn: [{ name: 'Hoàng Ngọc Tú', start: '08:00' }],
+      lastClosing: { at: at(-1, 22, 40), by: 'Nguyễn Trâm Anh', shift: 'T', diffCash: -50000, uCash: 0, diffBank: -100000, uBank: -100000 } };
+    return out;
+  };
+
   window.MOCK_API = async (b) => {
     await wait(b.action === 'uploadPhoto' ? 500 : 300);
     if (b.action === 'staffList') return ok(Object.keys(staff));
@@ -26,7 +49,8 @@
       case 'login':
         return ok({ name: b.name, role: staff[b.name], isHead, serverNow: Date.now(),
           shifts: [{ code: 'FT1', start: '08:00', end: '16:00' }], openSince: open[b.name] || null,
-          pendingTasks: tasks.length, pendingApprovals: isHead ? approvals.length : 0, cfg });
+          pendingTasks: tasks.length, pendingApprovals: isHead ? approvals.length : 0, cfg, summary: summary(b.name, isHead) });
+      case 'summary': return ok(summary(b.name, isHead));
       case 'uploadPhoto': return ok({ id: 'mock' + (++n) + 'xxxxxxxx' });
       case 'tasks': return ok(tasks);
       case 'clock': {
@@ -40,7 +64,7 @@
         return ok({ id: 'r' + n, zaloText: `(á) · Đầu ca sáng · (thử)\nMở quầy: ${b.name}\n[${Object.keys(b.photos).length} ảnh]` });
       case 'submitClosing': {
         const m = b.money;
-        const dC = m.cash - m.ipCash;
+        const dC = m.cash - (m.opening || 0) - m.ipCash;
         return ok({ id: 'r' + n, alert: dC < -200000, compEach: 0, flags: [], people: [b.name],
           zaloText: `(á) · Chốt ca (thử)\nGiữ ca: ${b.name}\nDoanh thu iPOS: ${fmt(m.ipRevenue)}\nKét: lệch ${fmt(dC)}\nGiao ca sau: ${(b.handover || []).map(h => h.text).join(' · ') || '—'}` });
       }

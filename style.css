@@ -51,6 +51,25 @@ h3 { font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: u
 .greet p { margin: 0 0 4px; }
 .todo { color: var(--warn); font-size: 15px; }
 
+/* bảng tóm tắt trang chủ */
+.summary { margin: 0 0 34px; display: grid; gap: 12px; }
+.sbox { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; font-size: 15px; }
+.sbox .ok { color: var(--ok); } .sbox .warn { color: var(--warn); }
+.stitle { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; display: flex; justify-content: space-between; }
+.scount { color: var(--ink); letter-spacing: 0; }
+.sbig { font-size: 19px; color: var(--ink-strong); margin-bottom: 2px; }
+.srow { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+.srow .k { color: var(--muted); }
+.srow .v { text-align: right; }
+.bar { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 4px 0 10px; }
+.bar i { display: block; height: 100%; background: var(--ok); border-radius: 99px; }
+.checks { list-style: none; margin: 0; padding: 0; }
+.checks li { display: flex; gap: 10px; padding: 4px 0; }
+.checks li small { color: var(--muted); font-size: 13px; }
+.checks .mark { width: 16px; flex: none; color: var(--muted); }
+.checks li.done { color: var(--muted); }
+.checks li.done .mark { color: var(--ok); }
+
 /* ô nhập */
 label.f { display: block; font-size: 15px; margin: 16px 0 6px; }
 input[type=text], input[type=time], textarea, select {
@@ -120,6 +139,14 @@ textarea { min-height: 76px; resize: vertical; }
 .cash .warn { color: var(--warn); }
 .cash .bad { color: var(--bad); }
 .cash .ok { color: var(--ok); }
+.cash .cblock { padding: 6px 0; }
+.cash .cblock + .cblock { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; }
+.cash .cline { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.cash .cline strong { font-weight: 600; white-space: nowrap; }
+.minus { color: var(--bad); }
+.plus { color: var(--warn); }
+.hint.minus { color: var(--bad); }
+.hint.plus { color: var(--warn); }
 
 /* tồn */
 .stock { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
