@@ -78,6 +78,19 @@
     return null;
   }
   // lệch có chiều: âm = thiếu, dương = thừa
+  // nhấn số liệu trong câu: giờ, tiền, thời lượng, số lần → đậm; thiếu / thừa / chưa giải trình → đỏ cam; khớp → xanh
+  const EM_RE = /((?:thiếu|thừa) \d{1,3}(?:\.\d{3})*đ|\(?(?:còn [^()]*?)?chưa giải trình\)?|khớp|\d{1,2}:\d{2}(?:\s?[–-]\s?\d{1,2}:\d{2})?|\d{1,3}(?:\.\d{3})+đ|\d+đ|\d+ giờ(?: \d+ phút)?|\d+ phút|\d+h(?:\d{2})?(?:–\d+h(?:\d{2})?)?|\d+ (?:lần|buổi|ngày))/g;
+  function em(text) {
+    const out = []; let last = 0; text = String(text == null ? '' : text);
+    text.replace(EM_RE, (m, _g, i) => {
+      if (i > last) out.push(text.slice(last, i));
+      const tone = /chưa giải trình/.test(m) || (/^(thiếu|thừa)/.test(m) && !/^ \(đã giải trình\)/.test(text.slice(i + m.length))) ? ' warn' : m === 'khớp' ? ' ok' : '';
+      out.push(h('b', { class: 'num' + tone, text: m }));
+      last = i + m.length; return m;
+    });
+    if (last < text.length) out.push(text.slice(last));
+    return out;
+  }
   const diffText = n => (!n ? 'khớp' : (n < 0 ? 'thiếu ' : 'thừa ') + money(Math.abs(n)));
   const hmToMin = s => { const p = String(s).split(':'); return +p[0] * 60 + +(p[1] || 0); };
   function shiftNameNow() {
@@ -211,9 +224,30 @@
   }
   ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, bumpIdle, { passive: true }));
 
+  // chuyển trang: vào màn con trượt từ phải, quay về trượt sang phải (cùng đường), cùng màn thì mờ chéo nhẹ
+  let navDir = 'fwd';
+  const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)');
+  const titleOf = root => { if (!root.querySelector) return ''; const t = root.querySelector('h2.title'); return t ? t.textContent : root.querySelector('.brand:not(.small)') ? '(á)' : ''; };
   function render(...nodes) {
-    $app.replaceChildren(...nodes.flat(Infinity).filter(n => n !== null && n !== undefined && n !== false));
-    window.scrollTo(0, 0);
+    const kids = nodes.flat(Infinity).filter(n => n !== null && n !== undefined && n !== false);
+    const before = titleOf($app), had = $app.childElementCount > 0;
+    const probe = document.createElement('div'); probe.append(...kids.map(k => typeof k === 'string' ? document.createTextNode(k) : k));
+    const after = titleOf(probe);
+    const dir = !had ? 'none' : before && before === after ? 'same' : navDir;
+    navDir = 'fwd';
+    const swap = () => { $app.replaceChildren(...probe.childNodes); window.scrollTo(0, 0); };
+    if (dir === 'none') return swap();
+    const reduced = reduceMotion && reduceMotion.matches;
+    document.documentElement.dataset.nav = reduced ? 'same' : dir;
+    if (document.visibilityState !== 'visible') return swap(); // tab ẩn: không chạy hoạt ảnh
+    if (document.startViewTransition) {
+      try { document.startViewTransition(swap); return; } catch (e) { /* trình duyệt cũ: làm bên dưới */ }
+    }
+    swap();
+    if (!$app.animate) return;
+    const x = reduced || dir === 'same' ? 0 : dir === 'back' ? -28 : 28;
+    $app.animate([{ opacity: 0, transform: `translateX(${x}px)` }, { opacity: 1, transform: 'none' }],
+      { duration: dir === 'same' ? 160 : 300, easing: 'cubic-bezier(.32,.72,0,1)' });
   }
   const brand = (small) => h('header', { class: 'brand' + (small ? ' small' : '') },
     h('div', { class: 'mark', text: '(á)' }), h('h1', { text: 'Đội hình bạn pha trà' }));
@@ -247,75 +281,102 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* bỏ qua */ } }
   };
   let loginToken = 0;
-  async function viewLogin() {
+  // màn chào: lời chào theo giờ + 1 câu động lực (tab CaiDat cột S:T) + nút Đăng nhập. Không hiện tên nhân viên.
+  const QUOTE_FALLBACK = [{ text: 'Ichi-go ichi-e: mỗi lần gặp gỡ chỉ có một lần. Hãy pha từng ly như thể đó là ly duy nhất khách được uống.', by: 'Trà đạo Nhật Bản' }];
+  const greeting = () => {
+    const hr = now().getHours();
+    return hr >= 4 && hr < 11 ? 'Chào buổi sáng' : hr < 13 ? 'Chào buổi trưa' : hr < 18 ? 'Chào buổi chiều' : 'Chào buổi tối';
+  };
+  const deviceId = () => {
+    let id = store.get('a-dev');
+    if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()).replace(/[^\w-]/g, ''); store.set('a-dev', id); }
+    return id;
+  };
+  function viewLogin() {
+    navDir = 'back';
     const token = ++loginToken;
-    const last = store.get('a-last');
-    const draw = (names, loading) => {
-      if (token !== loginToken) return;
-      const sorted = last && names.includes(last) ? [last, ...names.filter(n => n !== last)] : names;
-      render(brand(), h('h3', { text: 'Bạn là ai?' }),
-        h('div', { class: 'names' }, sorted.map(n => h('button', { class: n === last ? 'last' : '', onclick: () => viewPin(n) }, n))),
-        loading ? h('p', { class: 'hint', style: 'margin-top:14px' }, h('span', { class: 'spin' }), 'đang cập nhật danh sách…') : '');
-    };
-    const cached = store.get('a-names');
-    if (cached && cached.length) draw(cached, true);
-    else render(brand(), spinner('Đang tải danh sách…'));
-    let names;
-    try { names = await api('staffList', {}, false); } catch (e) {
-      if (token !== loginToken) return;
-      if (cached && cached.length) { draw(cached, false); return; } // mất mạng: vẫn dùng danh sách cũ
-      render(brand(), h('p', { class: 'alert bad', text: e.message }), h('button', { class: 'btn', onclick: viewLogin }, 'Thử lại'));
-      return;
-    }
-    if (token !== loginToken) return;
-    store.set('a-names', names);
-    if (!names.length) {
-      render(brand(), h('p', { class: 'alert', text: 'Chưa có nhân viên nào được đặt PIN. Chủ quán vào Sheet → menu (á) → Đặt PIN.' }));
-      return;
-    }
-    draw(names, false);
+    // bản cũ lưu danh sách tên trên máy: xoá đi
+    try { localStorage.removeItem('a-names'); localStorage.removeItem('a-last'); } catch (e) { /* bỏ qua */ }
+    const cached = store.get('a-quotes');
+    const pool = cached && cached.length ? cached : QUOTE_FALLBACK;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    const quoteText = h('p', { class: 'q-text', text: pick.text });
+    const quoteBy = h('p', { class: 'q-by', text: pick.by || '', hidden: !pick.by });
+    render(h('div', { class: 'welcome' },
+      h('div', { class: 'w-mark', text: '(á)' }),
+      h('div', { class: 'w-mid' },
+        h('h2', { class: 'title', text: greeting() }),
+        h('p', { class: 'w-sub', text: 'Đội hình bạn pha trà' }),
+        h('blockquote', { class: 'quote' }, quoteText, quoteBy)),
+      h('button', { class: 'btn', onclick: () => viewPin() }, 'Đăng nhập')));
+    // cập nhật câu mới từ Sheet cho lần mở sau; chưa có câu nào trên máy thì thay luôn
+    api('welcome', {}, false).then(d => {
+      const qs = (d && d.quotes || []).filter(q => q && q.text);
+      store.set('a-quotes', qs);
+      if (token === loginToken && !(cached && cached.length) && qs.length) {
+        const q = qs[Math.floor(Math.random() * qs.length)];
+        quoteText.textContent = q.text; quoteBy.textContent = q.by || ''; quoteBy.hidden = !q.by;
+      }
+    }).catch(() => { /* mất mạng: giữ câu đang hiện */ });
   }
 
-  function viewPin(name) {
-    loginToken++; // bỏ lượt vẽ lại danh sách tên đang chờ
-    let pin = '';
-    const dots = h('div', { class: 'dots', 'aria-label': 'PIN' }, [0, 1, 2, 3, 4, 5].map(() => h('span')));
-    const paint = () => [...dots.children].forEach((d, i) => d.classList.toggle('on', i < pin.length));
-    const press = async (k) => {
+  // nhập mã định danh (PIN 6 số) → máy chủ tìm đúng người
+  function viewPin() {
+    loginToken++;
+    let pin = '', busy = false;
+    const dots = h('div', { class: 'dots', role: 'img', 'aria-label': 'Đã nhập 0 trên 6 số' }, [0, 1, 2, 3, 4, 5].map(() => h('span')));
+    const HINT = 'Nhập mã định danh 6 số của bạn';
+    const msg = h('p', { class: 'pin-msg', 'aria-live': 'polite' }, HINT);
+    const del = h('button', { type: 'button', class: 'del', 'aria-label': 'Xoá số vừa nhập', hidden: true, onclick: () => press('del') }, 'Xoá');
+    const paint = () => {
+      [...dots.children].forEach((d, i) => d.classList.toggle('on', i < pin.length));
+      dots.setAttribute('aria-label', `Đã nhập ${pin.length} trên 6 số`);
+      del.hidden = !pin.length || busy;
+    };
+    const setMsg = (text, cls) => { msg.className = 'pin-msg' + (cls ? ' ' + cls : ''); msg.replaceChildren(...[].concat(text)); };
+    const fail = (text) => {
+      pin = ''; busy = false; paint();
+      dots.classList.remove('shake', 'checking'); void dots.offsetWidth; dots.classList.add('shake', 'bad');
+      setMsg(text, 'bad');
+    };
+    async function press(k) {
       if (busy) return;
-      if (k === '⌫') pin = pin.slice(0, -1);
+      if (dots.classList.contains('bad')) { dots.classList.remove('bad', 'shake'); setMsg(HINT); }
+      if (k === 'del') pin = pin.slice(0, -1);
       else if (pin.length < 6) pin += k;
       paint();
-      if (pin.length === 6) {
-        busy = true;
-        S.name = name; S.pin = pin;
-        msg.replaceChildren(h('span', { class: 'spin' }), 'đang kiểm tra…');
-        try {
-          await refreshInfo();
-          store.set('a-last', name);
-          bumpIdle();
-          viewHome();
-        } catch (e) {
-          S.name = S.pin = null;
-          if (/Không tìm thấy tên/.test(e.message)) { try { localStorage.removeItem('a-names'); } catch (x) { /* bỏ qua */ } }
-          pin = ''; paint();
-          msg.textContent = e.message;
-          msg.className = 'hint bad';
-          busy = false;
-        }
+      if (pin.length < 6) return;
+      busy = true; paint();
+      dots.classList.add('checking');
+      setMsg([h('span', { class: 'spin' }), 'Đang kiểm tra…']);
+      try {
+        const who = await api('pinLogin', { pin, dev: deviceId() }, false);
+        S.name = who.name; S.pin = pin;
+        await refreshInfo();
+        document.removeEventListener('keydown', onKey);
+        bumpIdle();
+        viewHome('fwd');
+      } catch (e) {
+        S.name = S.pin = null;
+        fail(e.message);
       }
+    }
+    // bàn phím rời / máy tính: gõ số, Backspace để xoá
+    const onKey = (e) => {
+      if (!dots.isConnected) { document.removeEventListener('keydown', onKey); return; }
+      if (/^[0-9]$/.test(e.key)) press(e.key);
+      else if (e.key === 'Backspace') press('del');
     };
-    let busy = false;
-    const msg = h('p', { class: 'hint', style: 'text-align:center' });
-    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
-    render(brand(true),
-      h('button', { class: 'back', onclick: viewLogin }, ico('back'), 'Chọn lại tên'),
-      h('h2', { class: 'title', text: firstName(name) }),
-      h('p', { class: 'sub', text: 'Nhập PIN 6 số' }),
-      dots, msg,
-      h('div', { class: 'keypad' }, keys.map(k => h('button', {
-        class: k ? '' : 'blank', 'aria-label': k === '⌫' ? 'xoá' : k, onclick: () => k && press(k)
-      }, k === '⌫' ? ico('close') : k))));
+    document.addEventListener('keydown', onKey);
+    const key = d => h('button', { type: 'button', class: 'k', onclick: () => press(d) }, d);
+    render(h('div', { class: 'pinscreen' },
+      h('div', { class: 'pin-top' }, h('button', { class: 'back', onclick: () => { document.removeEventListener('keydown', onKey); viewLogin(); } }, ico('back'), 'Quay lại')),
+      h('div', { class: 'pin-head' },
+        h('h2', { class: 'title', text: 'Đăng nhập' }),
+        dots, msg),
+      h('div', { class: 'keypad' },
+        ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(key),
+        h('span', { class: 'blank' }), key('0'), del)));
   }
 
   // ---------- trang chính ----------
@@ -348,79 +409,88 @@
     return null;
   }
 
+  const cap = s => s ? s[0].toLocaleUpperCase('vi') + s.slice(1) : s;
+  const chev = () => h('span', { class: 'chev', 'aria-hidden': 'true' });
+
+  // trang chủ 3 cấp: ca hôm nay (khối đen) → việc trong ca (thẻ trắng, việc kế tiếp nổi lên) → ca tới / tháng / cả quán (nhẹ)
   function summaryPanel(sm) {
-    if (!sm) return h('div', { class: 'summary' }, h('div', { class: 'sbox' }, spinner('Đang tải ca hôm nay…')));
+    if (!sm) return h('div', { class: 'summary' }, h('div', { class: 'hero' }, h('div', { class: 'lab' }, h('span', { class: 'spin' }), 'Đang tải ca hôm nay…')));
     const t = sm.today, b = t.block, mo = sm.month;
-    const row = (k, v, cls) => h('div', { class: 'srow' }, h('span', { class: 'k', text: k }), h('span', { class: 'v' + (cls ? ' ' + cls : ''), text: v }));
     const parts = [];
+    const sec = (title, right) => h('div', { class: 'sec' }, h('span', { text: title }), right ? h('small', { text: right }) : '');
 
-    // ca hôm nay
-    const todayBox = [h('div', { class: 'stitle', text: 'Ca hôm nay' })];
-    if (b) {
-      todayBox.push(h('div', { class: 'sbig', text: `${b.codes} · ${b.startHM}–${b.endHM}` }));
-      if (t.clock.state === 'in') todayBox.push(h('div', { class: 'ok', text: `Đang trong ca từ ${hm(new Date(t.clock.since))} · ${dur(t.workedMin)}` }));
-      else if (t.clock.state === 'late') todayBox.push(h('div', { class: 'warn', text: `Đã tới giờ ca (${b.startHM}) nhưng chưa chấm vào` }));
-      else if (b.start > now().getTime()) todayBox.push(h('div', { class: 'hint', text: `Bắt đầu ${b.startHM} · ${countdown(b.start)}` }));
-      else if (t.workedMin) todayBox.push(h('div', { class: 'hint', text: `Đã làm hôm nay: ${dur(t.workedMin)}` }));
-    } else {
-      todayBox.push(h('div', { class: 'sbig', text: 'Hôm nay bạn nghỉ' }));
-      if (t.clock.state === 'in') todayBox.push(h('div', { class: 'ok', text: `Đang trong ca từ ${hm(new Date(t.clock.since))} · ${dur(t.workedMin)}` }));
-    }
-    if (t.mates.length) todayBox.push(h('div', { class: 'hint', text: 'Đang trong ca: ' + t.mates.map(firstName).join(', ') }));
-    parts.push(h('div', { class: 'sbox' }, ...todayBox));
+    // cấp 1 · ca hôm nay
+    let stat = null;
+    const st = (cls, text, right) => h('div', { class: 'stat' }, h('span', { class: 'dot ' + cls }), h('span', null, em(text)), right ? h('span', { class: 'r' }, em(right)) : '');
+    if (t.clock.state === 'in') stat = st('ok', `Đang trong ca từ ${hm(new Date(t.clock.since))}`, dur(t.workedMin));
+    else if (t.clock.state === 'late' && b) stat = st('warn', 'Chưa chấm vào', `Ca bắt đầu ${b.startHM}`);
+    else if (b && b.start > now().getTime()) stat = st('idle', cap(countdown(b.start)) + ' tới giờ ca');
+    else if (t.workedMin) stat = st('idle', `Đã làm hôm nay: ${dur(t.workedMin)}`);
+    parts.push(h('div', { class: 'hero' },
+      h('div', { class: 'lab' }, h('span', { text: 'Ca hôm nay' }), b ? h('span', { text: b.codes }) : ''),
+      h('div', { class: 'time', text: b ? `${b.startHM} – ${b.endHM}` : 'Bạn nghỉ' }),
+      stat,
+      t.mates.length ? h('div', { class: 'mates' }, 'Đang trong ca: ', h('b', { text: t.mates.map(firstName).join(', ') })) : ''));
 
-    // việc trong ca
+    // cấp 2 · việc trong ca
     if (t.items.length) {
       const done = t.items.filter(x => x.done).length;
-      parts.push(h('div', { class: 'sbox' },
-        h('div', { class: 'stitle' }, 'Việc trong ca', h('span', { class: 'scount', text: `${done}/${t.items.length}` })),
-        h('div', { class: 'bar' }, h('i', { style: `width:${Math.round(100 * done / t.items.length)}%` })),
-        h('ul', { class: 'checks' }, t.items.map(x => {
-          const go = !x.done && itemAction(x);
-          const body = [h('span', { class: 'mark' }, x.done ? ico('check') : ''),
-            h('span', { class: 'txt' }, x.text, x.note ? h('small', { text: x.note }) : '')];
-          return h('li', { class: x.done ? 'done' : go ? 'go' : '' },
-            go ? h('button', { type: 'button', onclick: go }, ...body, h('span', { class: 'arrow' }, ico('next'))) : body);
-        }))));
+      const open = t.items.filter(x => !x.done), closed = t.items.filter(x => x.done);
+      const nextIdx = open.findIndex(x => itemAction(x));
+      const next = nextIdx >= 0 ? open[nextIdx] : null;
+      const rest = open.filter((x, i) => i !== nextIdx);
+      const li = x => {
+        const go = !x.done && itemAction(x);
+        const body = [h('span', { class: 'm' }, x.done ? ico('check') : h('span', { class: 'ring' })),
+          h('span', { class: 'txt' }, h('span', { text: cap(x.text) }), x.note ? h('small', null, em(cap(x.note))) : '')];
+        return h('li', { class: x.done ? 'done' : '' }, go ? h('button', { type: 'button', onclick: go }, ...body, chev()) : body);
+      };
+      parts.push(sec('Việc trong ca', `${done}/${t.items.length} xong`), h('div', { class: 'card tcard' },
+        h('div', { class: 'prog' }, h('i', { style: `width:${Math.round(100 * done / t.items.length)}%` })),
+        next ? h('button', { type: 'button', class: 'next', onclick: itemAction(next) },
+          h('span', { class: 'txt' }, h('span', { class: 'eyebrow', text: 'Làm ngay' }), h('span', { class: 'main', text: cap(next.text) }),
+            next.note ? h('small', null, em(cap(next.note))) : ''),
+          h('span', { class: 'go', text: 'Làm' })) : '',
+        rest.length || closed.length ? h('ul', { class: 'tasks' }, rest.map(li), closed.map(li)) : ''));
     }
 
-    // ca tiếp theo
+    // cấp 3 · ca tiếp theo
     if (sm.next) {
       const n = sm.next;
-      parts.push(h('div', { class: 'sbox' },
-        h('div', { class: 'stitle', text: 'Ca tiếp theo' }),
-        h('div', { class: 'sbig', text: `${dayLabel(n.start)} · ${n.codes} ${n.startHM}–${n.endHM}` }),
-        h('div', { class: 'hint', text: countdown(n.start) }),
-        h('button', { class: 'linkbtn more', onclick: () => viewWeek(0) }, 'Xem lịch cả tuần', ico('next'))));
+      parts.push(sec('Ca tiếp theo'), h('div', { class: 'card' },
+        h('button', { type: 'button', class: 'row', onclick: () => viewWeek(0) },
+          h('span', { class: 'txt' }, h('span', null, `${cap(dayLabel(n.start))} · ${n.codes} `, h('b', { class: 'num', text: `${n.startHM}–${n.endHM}` })), h('small', null, em(cap(countdown(n.start))))),
+          chev())));
     }
 
-    // tháng này / tổng kết tháng trước
-    parts.push(h('div', { class: 'sbox' },
-      h('div', { class: 'stitle', text: mo.recap ? `tổng kết ${mo.label}` : mo.label }),
-      row('Số buổi · giờ công', `${mo.days} buổi · ${dur(mo.minutes)}`),
-      mo.nightMinutes ? row('Sau 23h', dur(mo.nightMinutes)) : '',
-      row('Đi muộn', mo.late ? `${mo.late} lần · ${mo.lateMin} phút` : 'không', mo.late ? 'warn' : 'ok'),
-      row('Về sớm', mo.early ? `${mo.early} lần · ${mo.earlyMin} phút` : 'không', mo.early ? 'warn' : 'ok'),
-      row('Quên chấm ra', mo.forgot ? `${mo.forgot} lần` : 'không', mo.forgot ? 'warn' : 'ok'),
-      mo.pending ? row('Lượt đang chờ duyệt', String(mo.pending), 'warn') : ''));
+    // cấp 3 · tháng: lưới số, chỉ số xấu mới đỏ cam
+    const cell = (n, l, bad) => h('div', null, h('div', { class: 'n' + (bad ? ' warn' : ''), text: n }), h('div', { class: 'l', text: l }));
+    parts.push(sec(cap(mo.recap ? `tổng kết ${mo.label}` : mo.label)), h('div', { class: 'card' }, h('div', { class: 'grid' },
+      cell(`${mo.days} buổi`, 'Số buổi'),
+      cell(dur(mo.minutes), 'Giờ công'),
+      cell(mo.late ? `${mo.late} lần · ${mo.lateMin}′` : 'Không', 'Đi muộn', mo.late),
+      cell(mo.early ? `${mo.early} lần · ${mo.earlyMin}′` : 'Không', 'Về sớm', mo.early),
+      cell(mo.forgot ? `${mo.forgot} lần` : 'Không', 'Quên chấm ra', mo.forgot),
+      mo.nightMinutes ? cell(dur(mo.nightMinutes), 'Sau 23h') : '',
+      mo.pending ? cell(String(mo.pending), 'Đang chờ duyệt', true) : '')));
 
     // cả quán hôm nay (head-barista / chủ quán)
     if (sm.team) {
       const tm = sm.team, lc = tm.lastClosing;
       const lech = (label, d, u) => `${label} ${diffText(d)}` +
         (!d ? '' : !u ? ' (đã giải trình)' : u === d ? ' (chưa giải trình)' : ` (còn ${diffText(u)} chưa giải trình)`);
-      const lcText = !lc ? 'chưa có' : `ca ${lc.shift} ${dayLabel(lc.at)} ${hm(new Date(lc.at))} · ${firstName(lc.by)} · ` +
-        lech('két', lc.diffCash, lc.uCash) + ' · ' + lech('CK', lc.diffBank, lc.uBank);
-      parts.push(h('div', { class: 'sbox' },
-        h('div', { class: 'stitle', text: 'Cả quán hôm nay' }),
-        row('Báo cáo đầu ca', tm.openingDone ? 'đã có' : 'chưa có', tm.openingDone ? 'ok' : 'warn'),
-        row('Tới giờ chưa chấm vào', tm.notIn.length ? tm.notIn.map(x => `${firstName(x.name)} (${x.start})`).join(', ') : 'không', tm.notIn.length ? 'warn' : 'ok'),
-        h('div', { class: 'hint', style: 'margin-top:6px', text: 'Chốt ca gần nhất: ' + lcText })));
+      const flag = (k, v, bad) => h('div', { class: 'flag' }, h('span', { class: 'k', text: k }), h('span', { class: 'v ' + (bad ? 'warn' : 'ok'), text: v }));
+      parts.push(sec('Cả quán hôm nay'), h('div', { class: 'card' },
+        flag('Báo cáo đầu ca', tm.openingDone ? 'Đã có' : 'Chưa có', !tm.openingDone),
+        flag('Tới giờ chưa chấm vào', tm.notIn.length ? tm.notIn.map(x => `${firstName(x.name)} (${x.start})`).join(', ') : 'Không', tm.notIn.length),
+        h('div', { class: 'note' }, em('Chốt ca gần nhất: ' + (!lc ? 'chưa có' :
+          `ca ${lc.shift} ${dayLabel(lc.at)} ${hm(new Date(lc.at))} · ${firstName(lc.by)} · ` + lech('két', lc.diffCash, lc.uCash) + ' · ' + lech('CK', lc.diffBank, lc.uBank))))));
     }
     return h('div', { class: 'summary' }, ...parts);
   }
 
-  function viewHome() {
+  function viewHome(dir) {
+    navDir = typeof dir === 'string' ? dir : 'back';
     const i = S.info;
     const c = i.cfg;
     const m = now().getHours() * 60 + now().getMinutes();
@@ -460,12 +530,14 @@
         resendItem,
         item('Báo phát sinh', () => viewSoon('Báo phát sinh'), soon.cloneNode(true)),
         i.isHead ? item('Duyệt công', viewApprovals, i.pendingApprovals ? h('span', { class: 'count', text: i.pendingApprovals }) : null) : null,
-        h('hr'),
+      ),
+      h('ul', { class: 'menu' },
         item('Công thức pha chế', () => viewSoon('Công thức pha chế'), soon.cloneNode(true)),
         item('Xử lý tình huống khách hàng', () => viewSoon('Xử lý tình huống khách hàng'), soon.cloneNode(true)),
         item('Tra cứu sự cố', () => viewSoon('Tra cứu sự cố'), soon.cloneNode(true)),
         item('Danh sách liên hệ', () => viewSoon('Danh sách liên hệ'), soon.cloneNode(true)),
-        h('hr'),
+      ),
+      h('ul', { class: 'menu' },
         item('Đăng xuất', logout)));
   }
 
@@ -523,7 +595,7 @@
       const mineTxt = mine.map(b => `${hh((b.start - d.ts) / 60000)}–${hh((b.end - d.ts) / 60000)}`).join(' và ');
       const card = h('div', { class: 'sbox day' + (isToday ? ' today' : '') + (past ? ' past' : '') },
         h('div', { class: 'stitle' }, `${WD[dt.getDay()]} · ${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}`, isToday ? h('span', { class: 'scount', text: 'Hôm nay' }) : ''),
-        h('div', { class: 'mine' + (mine.length ? '' : ' off'), text: mine.length ? 'bạn làm ' + mineTxt : 'bạn nghỉ' }),
+        h('div', { class: 'mine' + (mine.length ? '' : ' off') }, mine.length ? ['Bạn làm ', h('b', { class: 'num', text: mineTxt })] : 'Bạn nghỉ'),
         lines.length ? h('ul', { class: 'shifts' }, lines) : h('p', { class: 'hint', text: 'Chưa xếp lịch' }));
       if (isToday) todayCard = card;
       return card;
@@ -615,14 +687,14 @@
       const toTxt = t.to && t.to.length ? ' · cho ' + t.to.map(firstName).join(', ') : ' · cho cả ca sau';
       return h('div', { class: 'card' },
         h('div', { text: t.text }),
-        h('div', { class: 'meta', text: `${firstName(t.from)} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''}${toTxt}` }),
+        h('div', { class: 'meta' }, em(`${firstName(t.from)} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''}${toTxt}`)),
         body, toggle);
     }));
   }
   const toText = t => t.to && t.to.length ? 'cho ' + t.to.map(firstName).join(', ') : 'cho cả ca sau';
   const taskInfo = tasks => h('ul', { class: 'checks info' }, tasks.map(t => h('li', null,
     h('span', { class: 'mark' }),
-    h('span', { class: 'txt' }, t.text, h('small', { text: `${firstName(t.from)} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''} · ${toText(t)}` })))));
+    h('span', { class: 'txt' }, t.text, h('small', null, em(`${firstName(t.from)} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''} · ${toText(t)}`))))));
   const skipOf = (store, t) => { const sk = store['skip:' + t.id]; return sk && sk.on ? sk : null; };
   const completedTasks = (tasks, store) => tasks.map(t => {
     const sk = skipOf(store, t);
@@ -963,14 +1035,14 @@
           b.sum.replaceChildren(
             h('div', { class: 'cline' }, h('span', { text: b.label }),
               h('strong', { class: !d ? 'ok' : d < 0 ? 'minus' : 'plus', text: !d ? 'khớp' : diffText(d) })),
-            h('div', { class: 'hint', text: detail }));
+            h('div', { class: 'hint' }, em(detail)));
           // chỉ hiện chỗ giải trình khi đang lệch (hoặc đã có dòng giải trình)
           b.rows.hidden = !d && !has;
           b.add.hidden = !u;
           b.add.replaceChildren(ico('add'), has ? 'Thêm lý do khác' : `Giải trình khoản ${d < 0 ? 'thiếu' : 'thừa'} này`);
           b.rest.replaceChildren(...(d || has ? [
-            ex ? h('div', { class: 'hint', text: `Đã giải trình ${diffText(ex)}` }) : '',
-            h('div', { class: u ? 'warn' : 'ok', text: u ? `còn ${diffText(u)} chưa giải trình · phải khớp mới gửi được` : 'đã khớp' })] : []));
+            ex ? h('div', { class: 'hint' }, 'Đã giải trình ', h('b', { class: 'num', text: money(Math.abs(ex)) })) : '',
+            h('div', { class: u ? 'warn' : 'ok' }, u ? ['Còn ', h('b', { text: diffText(u) }), ' chưa giải trình · phải khớp mới gửi được'] : 'Đã khớp')] : []));
         };
         paintBlock(blockC, cc.dC, cc.exC, cc.uC,
           `đầu ca ${money(m.opening)} + iPOS ${money(m.ipCash)} = phải có ${money(m.opening + m.ipCash)} · đếm được ${money(m.cash)}`);
@@ -1049,7 +1121,7 @@
       earlier.map(x => h('div', { class: 'card donecard' },
         x.file ? h('img', { src: URL.createObjectURL(x.file), alt: '' }) : null,
         h('div', null, h('div', { text: x.text }),
-          h('div', { class: 'meta', text: `Đã báo lúc ${hm(new Date(x.at))}${x.skip ? ' · không làm: ' + x.skip : ' · ảnh tự gửi kèm'}` })))),
+          h('div', { class: 'meta' }, em(`Đã báo lúc ${hm(new Date(x.at))}${x.skip ? ' · không làm: ' + x.skip : ' · ảnh tự gửi kèm'}`))))),
       tasks.length || !earlier.length ? taskList(tasks, store, update) : null,
       h('h3', { text: 'Việc khác đã làm' }), othersWrap,
       h('button', { class: 'add', type: 'button', onclick: () => { F.others.push({ text: '' }); drawOthers(); save(); } }, ico('add'), 'Thêm việc khác'),
@@ -1214,7 +1286,7 @@
       const done = st => { el.replaceChildren(h('div', { class: 'hint ok', text: `${it.name} · ${it.date}: ${st}` })); S.info.pendingApprovals--; };
       el.append(
         h('div', null, h('strong', { text: it.name }), ` · ${it.date} · ca ${it.shift || '—'}`),
-        h('div', { class: 'meta', text: `Chấm vào ${tIn || '—'} · chấm ra ${tOut || '—'}${plan.length ? ' · lịch ' + plan.map(b => b.codes + ' ' + b.startHM + '–' + b.endHM).join(', ') : ''}` }),
+        h('div', { class: 'meta' }, em(`Chấm vào ${tIn || '—'} · chấm ra ${tOut || '—'}${plan.length ? ' · lịch ' + plan.map(b => b.codes + ' ' + b.startHM + '–' + b.endHM).join(', ') : ''}`)),
         h('div', { class: 'todo', text: it.flags }),
         h('div', { class: 'selfies' }, img(it.selfieIn, 'selfie vào'), img(it.selfieOut, 'selfie ra')),
         missingTime ? h('p', { class: 'hint', text: 'Thiếu giờ chấm, chọn giờ thực tế rồi lưu.' }) : h('div', { class: 'row' },
