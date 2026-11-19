@@ -121,8 +121,9 @@
       }
       case 'approvals':
         if (!isHead) return err('Chỉ head-barista hoặc chủ quán được làm việc này');
-        if (b.id) { const x = approvedDone.find(a => a.id === b.id); return x ? ok([{ selfieIn: null, selfieOut: null, plan: [], stage: 'full', ...x }]) : err('Không tìm thấy lượt này'); }
-        return ok(approvals);
+        if (b.id) { const x = approvals.find(a => a.id === b.id) || approvedDone.find(a => a.id === b.id); return x ? ok([{ plan: [], stage: 'full', ...x, selfieIn: x.selfieIn || null, selfieOut: x.selfieOut || null }]) : err('Không tìm thấy lượt này'); }
+        // lite: không kèm ảnh, app tải ảnh sau
+        return ok(b.lite ? approvals.map(({ selfieIn, selfieOut, ...x }) => x) : approvals);
       case 'postNotice':
         if (!isHead) return err('Chỉ head-barista hoặc chủ quán được làm việc này');
         NOTICES.unshift({ title: b.title.trim(), body: b.body.trim(), date: Date.now(), img: !!b.photo, tag: b.tag, by: b.name || 'Bạn' });
@@ -130,7 +131,7 @@
       case 'deleteNotice':
         NOTICES.splice(b.i, 1);
         return ok({ notices: NOTICES });
-      case 'approvalsDone': return isHead ? ok(approvedDone) : err('Chỉ head-barista hoặc chủ quán được làm việc này');
+      case 'approvalsDone': return isHead ? ok(approvedDone.map(x => ({ plan: [], stage: 'full', ...x, selfieIn: undefined, selfieOut: undefined }))) : err('Chỉ head-barista hoặc chủ quán được làm việc này');
       case 'approve':
         if (b.op === 'reopen') { const x = approvedDone.find(a => a.id === b.id); approvedDone = approvedDone.filter(a => a.id !== b.id);
           if (x) approvals.push({ id: x.id, date: x.date, name: x.name, shift: x.shift, inTime: x.inTime, outTime: x.outTime, flags: x.flags, stage: 'full', selfieIn: null, selfieOut: null, plan: [] });

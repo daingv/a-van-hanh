@@ -38,7 +38,10 @@
     const t = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: 'status', text: msg });
     document.body.append(t);
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.remove(), bad ? 5000 : 2500);
+    toastTimer = setTimeout(() => {
+      t.classList.add('out');
+      setTimeout(() => t.remove(), 220);
+    }, bad ? 5000 : 2500);
   }
 
   async function api(action, payload = {}, auth = true) {
@@ -482,7 +485,11 @@
     if (had && before && dir !== 'same') scrollMemo[before] = window.scrollY;
     // về trang trước: cuộn đúng chỗ đã xem; sang trang mới: lên đầu; vẽ lại cùng trang: giữ nguyên
     const y = dir === 'back' && scrollMemo[after] != null ? scrollMemo[after] : dir === 'same' ? window.scrollY : 0;
-    const swap = () => { $app.replaceChildren(...probe.childNodes); window.scrollTo(0, y); syncTheme(); };
+    const wasLoading = had && !!$app.querySelector(':scope > p.sub > .spin');
+    const swap = () => {
+      $app.replaceChildren(...probe.childNodes); window.scrollTo(0, y); syncTheme();
+      if (dir === 'none' || (dir === 'same' && wasLoading)) stagger($app);
+    };
     if (dir === 'none') return swap();
     if (gestureNav) { gestureNav = false; return swap(); } // vuốt về: hoạt ảnh do cử chỉ lo
     const reduced = reduceMotion && reduceMotion.matches;
@@ -497,6 +504,50 @@
     $app.animate([{ opacity: 0, transform: `translateX(${x}px)` }, { opacity: 1, transform: 'none' }],
       { duration: dir === 'same' ? 160 : 300, easing: 'cubic-bezier(.32,.72,0,1)' });
   }
+  // ---------- hiệu ứng dùng chung ----------
+  // Mở / thu gọn theo chiều cao (không giật), thay nội dung mờ chéo, danh sách hiện lần lượt.
+  // Máy bật "Giảm chuyển động" thì đổi ngay, không chạy hiệu ứng.
+  const EASE = 'cubic-bezier(.32,.72,0,1)';
+  const still = () => !!(reduceMotion && reduceMotion.matches);
+  const running = new WeakMap();
+  function sizeTo(el, show, cb) {
+    const prev = running.get(el);
+    const from = prev ? el.getBoundingClientRect().height : null;
+    if (prev) prev.cancel();
+    if (show) el.hidden = false;
+    if (still() || !el.animate || !el.isConnected) { if (!show) el.hidden = true; cb && cb(); return; }
+    const cs = getComputedStyle(el);
+    const full = show ? el.getBoundingClientRect().height : 0;
+    const start = from !== null ? from : show ? 0 : el.getBoundingClientRect().height;
+    const mt = cs.marginTop, mb = cs.marginBottom;
+    el.style.overflow = 'hidden';
+    const a = el.animate([
+      { height: start + 'px', opacity: show ? 0 : 1, marginTop: show ? '0px' : mt, marginBottom: show ? '0px' : mb },
+      { height: full + 'px', opacity: show ? 1 : 0, marginTop: show ? mt : '0px', marginBottom: show ? mb : '0px' }
+    ], { duration: show ? 320 : 220, easing: EASE });
+    running.set(el, a);
+    a.onfinish = () => { running.delete(el); el.style.overflow = ''; if (!show) el.hidden = true; cb && cb(); };
+    a.oncancel = () => { el.style.overflow = ''; };
+  }
+  const reveal = (el, cb) => { if (el) sizeTo(el, true, cb); };
+  const conceal = (el, cb) => { if (!el) return; if (el.hidden) { cb && cb(); return; } sizeTo(el, false, cb); };
+  const collapseAway = el => conceal(el, () => el.remove());
+  // thay một khối bằng khối khác: khối mới phóng nhẹ + rõ dần
+  function swapIn(oldEl, newEl) {
+    oldEl.replaceWith(newEl);
+    if (still() || !newEl.animate) return;
+    newEl.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: EASE });
+  }
+  // các khối của trang hiện lần lượt (sau màn "đang tải…" hoặc lần mở đầu)
+  function stagger(root) {
+    if (still() || !root.animate) return;
+    [...root.children].slice(0, 14).forEach((c, i) => {
+      if (c.classList && c.classList.contains('back')) return;
+      c.animate([{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 340, delay: Math.min(i, 8) * 35, easing: EASE, fill: 'backwards' });
+    });
+  }
+
   const brand = (small) => h('header', { class: 'brand' + (small ? ' small' : '') },
     h('div', { class: 'mark', text: '(á)' }), h('h1', { text: 'Đội hình bạn pha trà' }));
   // chỉ 5 biểu tượng nét mảnh: tiếp, quay lại, xong, xoá, thêm
@@ -1789,24 +1840,39 @@
   async function viewApprovals() {
     render(back(), h('h2', { class: 'title', text: 'Duyệt công' }), spinner('Đang tải…'));
     let list;
-    try { list = await api('approvals'); } catch (e) { render(back(), h('p', { class: 'alert bad', text: e.message })); return; }
+    // lite: danh sách về ngay, ảnh selfie tải sau từng thẻ
+    try { list = await api('approvals', { lite: 1 }); } catch (e) { render(back(), h('p', { class: 'alert bad', text: e.message })); return; }
     S.info.pendingApprovals = list.length;
     const mins = v => v ? hmToMin(v) : null;
     const WD = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
     const dayLabel = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); if (!m) return d || ''; const x = new Date(+m[1], m[2] - 1, +m[3]); return WD[x.getDay()] + ', ' + m[3] + '/' + m[2]; };
     // "đi trễ 205 phút" → "Đi trễ 3 giờ 25 phút"
     const flagText = t => { t = t.trim().replace(/(\d+) phút/g, (_, n) => dur(+n)); return t.charAt(0).toUpperCase() + t.slice(1); };
+    const ST = { 'đã duyệt': 'Đã duyệt', 'đã sửa': 'Đã sửa giờ', 'đã duyệt vào': 'Đã duyệt giờ vào', 'tự duyệt': 'Tự duyệt' };
     const timeInput = v => {
       const el = h('input', { type: 'time', value: v || '', class: 'tin' });
       el.get = () => el.value ? el.value.slice(0, 5) : '';
       el.set = x => { el.value = x || ''; el.dispatchEvent(new Event('change', { bubbles: true })); };
       return el;
     };
-    const card = (it, review) => {
+    // ảnh selfie: tải tối đa 3 thẻ một lúc
+    const photoQ = [];
+    let photoBusy = 0;
+    const pumpPhotos = () => {
+      while (photoBusy < 3 && photoQ.length) {
+        const job = photoQ.shift();
+        photoBusy++;
+        api('approvals', { id: job.id }).then(([one]) => job.done(one || {}), () => job.done({ failed: true }))
+          .finally(() => { photoBusy--; pumpPhotos(); });
+      }
+    };
+    const loadPhotos = (el, id, done) => { photoQ.push({ el, id, done }); pumpPhotos(); };
+
+    const card = (it, review, onClose) => {
       const tIn = it.inTime ? hm(new Date(it.inTime)) : '', tOut = it.outTime ? hm(new Date(it.outTime)) : '';
       const onlyIn = it.stage === 'in';
       const plan = it.plan || [];
-      const el = h('div', { class: 'card appr' });
+      const el = h('div', { class: 'card appr' + (review ? ' review' : '') });
 
       // gợi ý: khối ca chứa giờ vào → giờ ra = hết ca đó (chỉ khi sau giờ vào)
       const inM = mins(tIn), outM = mins(tOut);
@@ -1843,87 +1909,113 @@
       } }, onlyIn ? 'Theo lịch ' + mine.startHM : 'Theo lịch ' + mine.startHM + '–' + mine.endHM) : null;
       save.addEventListener('click', async () => {
         save.disabled = true;
+        save.replaceChildren(h('span', { class: 'spin' }), 'đang lưu…');
         try {
           await api('approve', { id: it.id, op: 'edit', inTime: pIn.get(), outTime: onlyIn ? '' : pOut.get(), reason: reason.value });
-          done(onlyIn ? 'đã sửa giờ vào' : 'đã sửa');
-        } catch (e) { toast(e.message, true); calc(); }
+          done(onlyIn ? 'đã sửa giờ vào' : 'đã sửa giờ');
+        } catch (e) { toast(e.message, true); save.replaceChildren(onlyIn ? 'Lưu giờ vào' : 'Lưu giờ đã sửa'); calc(); }
       });
       const missingTime = !onlyIn && (!it.inTime || !it.outTime);
+      // một lúc chỉ một nút chính: đang xem thì "Duyệt", đang sửa thì "Lưu"
+      const cancel = missingTime ? null : h('button', { type: 'button', class: 'linkbtn quiet', onclick: () => editMode(false) }, 'Không sửa nữa');
       const form = h('div', { class: 'aform', hidden: !missingTime },
         h('div', { class: 'arange' },
           h('label', null, h('span', { text: 'Vào' }), pIn),
           onlyIn ? null : h('span', { class: 'arr', text: '→' }),
           onlyIn ? null : h('label', null, h('span', { text: 'Ra' }), pOut)),
         h('div', { class: 'ameta' }, preview, fill),
-        reason, reasonChips, save);
+        reason, reasonChips, save, cancel);
       calc();
+      const okBtn = h('button', { class: 'btn' }, review ? 'Giữ nguyên' : onlyIn ? 'Duyệt giờ vào' : 'Duyệt');
+      okBtn.addEventListener('click', async () => {
+        okBtn.disabled = true;
+        okBtn.replaceChildren(h('span', { class: 'spin' }), 'đang duyệt…');
+        try { await api('approve', { id: it.id, op: 'approve' }); done(review ? 'đã giữ nguyên' : onlyIn ? 'đã duyệt giờ vào' : 'đã duyệt'); }
+        catch (e) { toast(e.message, true); okBtn.disabled = false; okBtn.replaceChildren(review ? 'Giữ nguyên' : onlyIn ? 'Duyệt giờ vào' : 'Duyệt'); }
+      });
+      const act = missingTime ? null : h('div', { class: 'aact' }, okBtn,
+        h('button', { class: 'btn ghost', onclick: () => editMode(true) }, 'Sửa giờ'));
+      const editMode = on => {
+        if (on) { conceal(act); reveal(form); setTimeout(() => (onlyIn ? pIn : reason).focus({ preventScroll: true }), 260); }
+        else { conceal(form); reveal(act); }
+      };
       const done = st => {
-        el.replaceChildren(h('div', { class: 'hint ok', text: `${it.name} · ${dayLabel(it.date)}: ${st}` }));
-        if (review) setTimeout(() => viewApprovals(), 900); else S.info.pendingApprovals--;
+        if (navigator.vibrate) navigator.vibrate(8);
+        const note = h('div', { class: 'adone' }, h('span', { class: 'tick' }, ico('check')), h('span', { text: `${it.name} · ${dayLabel(it.date)}: ${st}` }));
+        swapIn(el, note);
+        if (review) setTimeout(() => { if (alive(note)) loadDoneList(); }, 1100);
+        else { S.info.pendingApprovals--; setTimeout(() => { if (alive(note)) collapseAway(note); }, 1600); }
       };
 
-      // ảnh + giờ: chỉ hiện phần đang cần duyệt
-      const shot = (b64, label, time, ok) => h('div', { class: 'pt' },
-        b64 ? h('img', { src: 'data:image/jpeg;base64,' + b64, alt: 'selfie ' + label.toLowerCase() }) : h('div', { class: 'noimg', text: time ? 'Không ảnh' : 'Chưa chấm' }),
-        h('div', { class: 'ptx' }, h('small', { text: label }), h('b', { class: time ? '' : 'none', text: time || '—' }),
-          ok ? h('span', { class: 'okt', text: 'đã duyệt' }) : null));
+      // ảnh + giờ: chỉ hiện phần đang cần duyệt; ảnh tải sau nên hiện khung chờ
+      const shot = (b64, label, time, ok) => {
+        const box = b64 ? h('img', { src: 'data:image/jpeg;base64,' + b64, alt: 'selfie ' + label.toLowerCase() })
+          : b64 === undefined && time ? h('div', { class: 'noimg wait' }) : h('div', { class: 'noimg', text: time ? 'Không ảnh' : 'Chưa chấm' });
+        const pt = h('div', { class: 'pt' }, box,
+          h('div', { class: 'ptx' }, h('small', { text: label }), h('b', { class: time ? '' : 'none', text: time || '—' }),
+            ok ? h('span', { class: 'okt', text: 'đã duyệt' }) : null));
+        pt.setPhoto = v => {
+          if (!pt.firstChild || !pt.firstChild.classList || !pt.firstChild.classList.contains('wait')) return;
+          const img = v ? h('img', { src: 'data:image/jpeg;base64,' + v, alt: 'selfie ' + label.toLowerCase(), class: 'fadein' }) : h('div', { class: 'noimg', text: 'Không ảnh' });
+          pt.firstChild.replaceWith(img);
+        };
+        return pt;
+      };
       const flags = String(it.flags || '').split(';').map(x => x.trim()).filter(Boolean);
       const sched = plan.length ? plan.map(b => b.startHM + '–' + b.endHM).join(', ') : 'không có lịch';
+      const sIn = shot(it.selfieIn, 'Vào', tIn, it.inOk && !onlyIn && !review);
+      const sOut = onlyIn ? null : shot(it.selfieOut, 'Ra', tOut);
+      if (it.selfieIn === undefined && it.selfieOut === undefined && (it.inTime || it.outTime)) {
+        loadPhotos(el, it.id, one => { sIn.setPhoto(one.selfieIn); if (sOut) sOut.setPhoto(one.selfieOut); });
+      }
       el.append(...[
         h('div', { class: 'ahead' },
-          h('strong', { text: it.name }),
-          h('span', { class: 'asub', text: `${dayLabel(it.date)} · ca ${it.shift || '—'} · ${sched}` })),
-        review ? h('p', { class: 'hint', text: `Vòng 2 · ${ST[it.status] || it.status}${it.by ? ' bởi ' + firstName(it.by) : ''}${it.reason ? ' · ' + it.reason : ''}. Bấm Giữ nguyên, hoặc sửa giờ: cột Cờ tính lại theo giờ mới.` }) : null,
+          h('div', null, h('strong', { text: it.name }),
+            h('span', { class: 'asub', text: `${dayLabel(it.date)} · ca ${it.shift || '—'} · ${sched}` })),
+          onClose ? h('button', { type: 'button', class: 'aclose', 'aria-label': 'thu gọn', onclick: onClose }, ico('close')) : null),
+        review ? h('p', { class: 'hint', text: `${ST[it.status] || it.status}${it.by ? ' bởi ' + firstName(it.by) : ''}${it.reason ? ' · ' + it.reason : ''}` }) : null,
         flags.length ? h('div', { class: 'aflags' }, flags.map(t => h('span', { class: 'aflag', text: flagText(t) }))) : null,
-        h('div', { class: 'ptimes' + (onlyIn ? ' one' : '') },
-          shot(it.selfieIn, 'Vào', tIn, it.inOk && !onlyIn),
-          onlyIn ? null : shot(it.selfieOut, 'Ra', tOut)),
+        h('div', { class: 'ptimes' + (onlyIn ? ' one' : '') }, sIn, sOut),
         onlyIn ? h('p', { class: 'hint', text: 'Đang trong ca · giờ ra duyệt sau khi chấm ra' }) : null,
-        missingTime ? h('p', { class: 'hint', text: 'Thiếu giờ chấm: nhập giờ thực tế rồi lưu.' }) : h('div', { class: 'aact' },
-          h('button', { class: 'btn', onclick: async (ev) => {
-            ev.target.disabled = true;
-            try { await api('approve', { id: it.id, op: 'approve' }); done(onlyIn ? 'đã duyệt giờ vào' : 'đã duyệt'); }
-            catch (e) { toast(e.message, true); ev.target.disabled = false; }
-          } }, review ? 'Giữ nguyên' : onlyIn ? 'Duyệt giờ vào' : 'Duyệt'),
-          h('button', { class: 'btn ghost', onclick: () => { form.hidden = !form.hidden; } }, 'Sửa giờ')),
+        missingTime ? h('p', { class: 'hint', text: 'Thiếu giờ chấm: nhập giờ thực tế rồi lưu.' }) : act,
         form].filter(Boolean));
       return el;
     };
-    // đã duyệt / sửa trong 3 ngày: lỡ tay thì mở lại để duyệt lần nữa
+
+    // đã duyệt gần đây: bấm vào một dòng là mở thẻ ngay tại chỗ để xem lại / sửa nhanh
     const doneWrap = h('div');
-    const ST = { 'đã duyệt': 'Đã duyệt', 'đã sửa': 'Đã sửa giờ', 'đã duyệt vào': 'Đã duyệt giờ vào', 'tự duyệt': 'Tự duyệt' };
     const doneRow = d => {
       const tIn = d.inTime ? hm(new Date(d.inTime)) : '—', tOut = d.outTime ? hm(new Date(d.outTime)) : '—';
-      const look = h('button', { type: 'button', class: 'chip sm on' }, 'Xem lại');
-      look.addEventListener('click', async () => {
-        look.disabled = true;
-        try {
-          const [one] = await api('approvals', { id: d.id });
-          li.replaceWith(h('li', { class: 'drow open' }, card(one, true)));
-        } catch (e) { toast(e.message, true); look.disabled = false; }
-      });
-      const btn = h('button', { type: 'button', class: 'chip sm' }, 'Mở lại');
-      btn.addEventListener('click', async () => {
-        if (btn.dataset.sure !== '1') { btn.dataset.sure = '1'; btn.textContent = 'Bấm lần nữa để mở lại'; btn.classList.add('on'); return; }
-        btn.disabled = true;
-        try {
-          await api('approve', { id: d.id, op: 'reopen' });
-          toast(d.status === 'đã sửa' ? 'Đã mở lại, giờ quay về giờ chấm gốc' : 'Đã mở lại để duyệt lần nữa');
-          viewApprovals();
-        } catch (e) { toast(e.message, true); btn.disabled = false; }
-      });
-      const li = h('li', { class: 'drow' },
+      const li = h('li', { class: 'drow' });
+      const row = h('button', { type: 'button', class: 'dbtn', 'aria-expanded': 'false' },
         h('div', null, h('strong', { text: d.name }), h('span', { class: 'asub', text: `${dayLabel(d.date)} · ${tIn}–${tOut}` }),
-          h('span', { class: 'asub', text: `${ST[d.status] || d.status}${d.by ? ' · ' + firstName(d.by) : ''}${d.flags ? ' · ' + flagText(d.flags.split('; ')[0]) : ''}${d.reason ? ' · ' + d.reason : ''}` })),
-        h('div', { class: 'dbtns' }, look, btn));
+          h('span', { class: 'asub', text: `${ST[d.status] || d.status}${d.by ? ' · ' + firstName(d.by) : ''}${d.flags ? ' · ' + flagText(d.flags.split('; ')[0]) : ''}` })),
+        h('span', { class: 'dchev' }, ico('next')));
+      let open = null;
+      const close = () => { if (!open) return; const o = open; open = null; li.classList.remove('open'); row.setAttribute('aria-expanded', 'false'); conceal(o, () => o.remove()); reveal(row); };
+      row.addEventListener('click', () => {
+        if (open) return close();
+        li.classList.add('open');
+        row.setAttribute('aria-expanded', 'true');
+        open = card(d, true, close);
+        open.hidden = true;
+        li.append(open);
+        conceal(row);
+        reveal(open);
+      });
+      li.append(row);
       return li;
     };
-    const loadDoneList = () => api('approvalsDone').then(ds => {
-      if (!alive(doneWrap)) return;
-      doneWrap.replaceChildren(...(ds.length ? [h('h3', { text: 'Đã duyệt gần đây' }),
-        h('p', { class: 'hint', text: 'Xem lại: duyệt vòng 2, sửa tiếp từ giờ hiện tại. Mở lại: trả về giờ chấm gốc và đưa lên chờ duyệt.' }),
-        h('ul', { class: 'card dlist' }, ds.map(doneRow))] : []));
-    }).catch(() => {});
+    function loadDoneList() {
+      return api('approvalsDone').then(ds => {
+        if (!alive(doneWrap)) return;
+        const next = ds.length ? [h('h3', { text: 'Đã duyệt gần đây' }),
+          h('p', { class: 'hint', text: 'Bấm vào một lượt để xem lại và sửa nhanh. Sửa giờ thì cột Cờ tính lại.' }),
+          h('ul', { class: 'card dlist' }, ds.map(doneRow))] : [];
+        doneWrap.replaceChildren(...next);
+        if (next.length && doneWrap.animate && !reduceMotion.matches) doneWrap.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 280, easing: EASE });
+      }).catch(() => {});
+    }
     render(back(), h('h2', { class: 'title', text: 'Duyệt công' }),
       h('p', { class: 'sub', text: list.length ? `${list.length} lượt cần xem. Lượt bình thường đã tự duyệt.` : 'Không có lượt nào cần duyệt.' }),
       list.map(it => card(it)), doneWrap);

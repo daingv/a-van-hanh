@@ -620,3 +620,56 @@ input, textarea, [contenteditable="true"] { -webkit-user-select: text; user-sele
 .dbtns { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex-shrink: 0; }
 .drow.open { display: block; padding: 0; }
 .drow.open > .card { margin: 0; box-shadow: none; }
+
+/* ---------- chuyển động khi tương tác ----------
+   Nhấn: lún nhẹ ngay lúc chạm, thả ra bật về mượt (không đổi tức thì). */
+button, .chip, .btn, .k, .linkbtn, .menu li > button, .summary button, .names button, .dbtn {
+  transition: transform .22s cubic-bezier(.32,.72,0,1), background-color .2s ease, color .2s ease,
+    box-shadow .2s ease, opacity .2s ease, border-color .2s ease;
+}
+.btn:not(:disabled):active { transform: scale(.97); transition-duration: .08s; }
+.chip:not(:disabled):active { transform: scale(.94); transition-duration: .08s; }
+.linkbtn:not(:disabled):active { opacity: .55; transition-duration: .08s; }
+.menu li > button:active, .summary button:active, .names button:active, .dbtn:active { transition-duration: .06s; }
+.keypad .k:active { transform: scale(.94); transition-duration: .06s; }
+input, textarea, select { transition: box-shadow .2s ease, border-color .2s ease, background-color .2s ease; }
+.btn:disabled { transition-duration: .25s; }
+
+/* thông báo nhỏ */
+.toast { animation: toast-in .34s cubic-bezier(.32,.72,0,1) both; }
+.toast.out { animation: toast-out .2s ease-in both; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 16px) scale(.96); } }
+@keyframes toast-out { to { opacity: 0; transform: translate(-50%, 10px) scale(.98); } }
+
+/* ảnh tải sau: khung chờ lấp lánh, ảnh về thì rõ dần */
+.pt .noimg.wait { border: 0; background: linear-gradient(100deg, var(--fill) 30%, #f7f7f9 50%, var(--fill) 70%) 0 0 / 300% 100%; animation: shimmer 1.2s linear infinite; }
+@keyframes shimmer { to { background-position: -150% 0; } }
+.pt img.fadein { animation: w-fade .35s ease-out both; }
+
+/* duyệt công */
+.ahead { display: flex; align-items: flex-start; gap: 8px; }
+.ahead > div { flex: 1; min-width: 0; }
+.aclose { flex: none; width: 32px; height: 32px; margin: -6px -6px 0 0; border: 0; border-radius: 50%; background: var(--fill); color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.aclose svg { width: 14px; height: 14px; }
+.aclose:active { transform: scale(.9); transition-duration: .06s; }
+.linkbtn.quiet { display: block; margin: 4px auto 0; text-decoration: none; color: var(--muted); padding: 8px 12px; }
+.adone { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: var(--r); padding: 14px 16px; margin: 8px 0; color: var(--ok); font-size: 15px; }
+.adone .tick { width: 26px; height: 26px; border-radius: 50%; background: var(--ok); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; }
+.adone .tick svg { width: 14px; height: 14px; }
+.dlist { padding: 4px 0; overflow: hidden; }
+.drow { display: block; padding: 0; border-bottom: 1px solid var(--line); }
+.drow .dbtn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; background: none; border: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.drow .dbtn > div { flex: 1; min-width: 0; }
+.drow .dbtn:active { background: #f2f2f4; }
+.drow .dchev { flex: none; width: 14px; height: 14px; color: var(--faint); }
+.drow .dchev svg { width: 14px; height: 14px; }
+.drow.open { background: var(--bg); }
+.drow > .card.appr.review { margin: 0; border-radius: 0; background: var(--card); }
+
+@media (prefers-reduced-motion: reduce) {
+  button, .chip, .btn, .k, .linkbtn, .dbtn { transition: background-color .15s ease, color .15s ease, opacity .15s ease; }
+  .btn:not(:disabled):active, .chip:not(:disabled):active, .keypad .k:active, .aclose:active { transform: none; opacity: .7; }
+  .toast, .toast.out { animation: w-fade .2s ease both; }
+  .toast.out { animation-direction: reverse; }
+  .pt .noimg.wait { animation: none; }
+}
