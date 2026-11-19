@@ -425,7 +425,7 @@
   };
   const markLoaded = k => { isLoaded(k); loaded.keys.add(k); };
   // các việc làm thay đổi số ở trang chủ: xong việc là tải lại trang chủ
-  const CHANGES_SUMMARY = ['clock', 'completeTask', 'submitOpening', 'submitClosing', 'approve'];
+  const CHANGES_SUMMARY = ['clock', 'completeTask', 'submitOpening', 'submitClosing', 'approve', 'postNotice', 'deleteNotice'];
   // cùng một yêu cầu đang chạy thì dùng chung, không gọi máy chủ lần hai
   function fresh(action, payload, k) {
     if (!inflight[k]) inflight[k] = api(action, payload).then(v => { memo.set(k, v); markLoaded(k); return v; }).finally(() => { delete inflight[k]; });
@@ -587,17 +587,35 @@
     return [h('div', { class: 'sec sec-top' }, h('span', { text: 'Thông báo' })),
       h('div', { class: 'card' }, h('ul', { class: 'notices' }, list.map((n, k) => h('li', null,
         h('button', { type: 'button', class: 'row', onclick: () => viewNotice(n, k) },
-          h('span', { class: 'txt' }, h('span', { class: 'nt', text: n.title }), n.date ? h('small', { text: ddmm(n.date) }) : ''),
+          h('span', { class: 'txt' }, h('span', { class: 'nt', text: n.title }),
+            h('small', { class: 'nmeta' }, tagPill(n.tag), n.date ? h('span', { text: ddmm(n.date) }) : '')),
           seen.includes(noticeKey(n)) ? '' : h('span', { class: 'new', text: 'Mới' }),
           chev())))))];
   }
+  // chủ đề thông báo → màu nhãn (khớp danh sách NOTICE_TAGS ở máy chủ)
+  const NOTICE_TAGS = ['Chung', 'Lịch ca', 'Công thức', 'Quy định', 'Sự kiện', 'Khẩn'];
+  const TAG_CLASS = { 'Chung': 'gray', 'Lịch ca': 'blue', 'Công thức': 'green', 'Quy định': 'amber', 'Sự kiện': 'violet', 'Khẩn': 'red' };
+  const tagPill = tag => { const t = tag || 'Chung'; return h('span', { class: 'tag ' + (TAG_CLASS[t] || 'gray'), text: t }); };
+  // cập nhật danh sách thông báo đang nhớ trên máy sau khi gửi / gỡ
+  const setNotices = list => {
+    const sm = memo.get('summary', 24 * 3600e3);
+    if (sm) { sm.notices = list; memo.set('summary', sm); }
+    if (S.info && S.info.summary) S.info.summary.notices = list;
+  };
   const NOTICE_IMG = {}; // ảnh thông báo đã xem trong lần mở app này
   async function viewNotice(n, k) {
     const key = noticeKey(n);
     store.set('a-seen', (store.get('a-seen') || []).filter(x => x !== key).concat(key).slice(-60));
     const img = h('div', { class: 'n-img' });
-    render(back(), n.date ? h('p', { class: 'date', text: ddmm(n.date) }) : '', h('h2', { class: 'title', text: n.title }),
-      n.body ? h('div', { class: 'n-body', text: n.body }) : '', img);
+    const del = S.info && S.info.isHead ? h('button', { class: 'btn ghost danger', type: 'button', onclick: async () => {
+      if (!confirm('Gỡ thông báo "' + n.title + '"? Cả quán sẽ không thấy thông báo này nữa.')) return;
+      del.disabled = true; del.replaceChildren(h('span', { class: 'spin' }), 'đang gỡ…');
+      try { const r = await api('deleteNotice', { i: k, t: n.title }); setNotices(r.notices); toast('Đã gỡ thông báo'); viewHome('back'); }
+      catch (e) { toast(e.message, true); del.disabled = false; del.textContent = 'Gỡ thông báo'; }
+    } }, 'Gỡ thông báo') : '';
+    render(back(), h('p', { class: 'date nmeta' }, tagPill(n.tag), n.date ? h('span', { text: ddmm(n.date) }) : ''), h('h2', { class: 'title', text: n.title }),
+      n.body ? h('div', { class: 'n-body', text: n.body }) : '', img,
+      n.by ? h('p', { class: 'hint n-by', text: 'Đăng bởi ' + n.by }) : '', del);
     if (!n.img) return;
     img.replaceChildren(spinner('Đang tải ảnh…'));
     try {
@@ -607,6 +625,45 @@
     } catch (e) {
       if (alive(img)) img.replaceChildren(h('p', { class: 'alert bad', text: e.message }));
     }
+  }
+
+  function viewPostNotice() {
+    const F = { tag: '', photos: {} };
+    const title = h('input', { type: 'text', maxlength: 120, placeholder: 'Ví dụ: Đổi giờ họp tuần này', 'aria-label': 'Tiêu đề' });
+    const body = h('textarea', { maxlength: 3000, placeholder: 'Nội dung chi tiết (không bắt buộc)', 'aria-label': 'Nội dung', style: 'min-height:140px' });
+    const tags = h('div', { class: 'chips tagpick', role: 'radiogroup', 'aria-label': 'Chủ đề' });
+    const drawTags = () => tags.replaceChildren(...NOTICE_TAGS.map(t => h('button', { type: 'button', role: 'radio',
+      class: 'chip tagchip ' + TAG_CLASS[t] + (F.tag === t ? ' on' : ''), 'aria-checked': F.tag === t ? 'true' : 'false',
+      onclick: () => { F.tag = t; drawTags(); check(); } }, t)));
+    const missing = h('p', { class: 'missing' });
+    const photo = () => F.photos.p;
+    const check = () => {
+      const lack = [!F.tag && 'chủ đề', !title.value.trim() && 'tiêu đề'].filter(Boolean);
+      const uploading = photo() && photo().file && !photo().id;
+      missing.textContent = lack.length ? 'còn thiếu: ' + lack.join(', ') : uploading ? 'đang tải ảnh…' : '';
+      submit.disabled = lack.length > 0 || !!uploading;
+    };
+    title.addEventListener('input', check);
+    const submit = h('button', { class: 'btn', onclick: async () => {
+      submit.disabled = true;
+      submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
+      try {
+        const r = await api('postNotice', { tag: F.tag, title: title.value, body: body.value, photo: photo() && photo().id || '' });
+        setNotices(r.notices);
+        toast('Đã gửi thông báo cho cả quán');
+        viewHome('back');
+      } catch (e) { toast(e.message, true); submit.textContent = 'Gửi cho cả quán'; check(); }
+    } }, 'Gửi cho cả quán');
+    drawTags();
+    render(back(), h('h2', { class: 'title', text: 'Gửi thông báo' }),
+      h('p', { class: 'sub', text: 'Cả quán sẽ thấy ở đầu trang chính.' }),
+      h('label', { class: 'f', text: 'Chủ đề' }), tags,
+      h('label', { class: 'f', text: 'Tiêu đề' }), title,
+      h('label', { class: 'f', text: 'Nội dung' }), body,
+      h('label', { class: 'f', text: 'Hình ảnh' }),
+      h('div', { class: 'photos' }, photoSlot(F.photos, 'p', 'Thêm ảnh (không bắt buộc)', { wide: true, onChange: check })),
+      missing, submit);
+    check();
   }
 
   function summaryPanel(sm) {
@@ -719,6 +776,7 @@
         resendItem,
         item('Báo phát sinh', () => viewSoon('Báo phát sinh'), soon.cloneNode(true)),
         i.isHead ? item('Duyệt công', viewApprovals, i.pendingApprovals ? h('span', { class: 'count', text: i.pendingApprovals }) : null) : null,
+        i.isHead ? item('Gửi thông báo', viewPostNotice) : null,
       ),
       h('ul', { class: 'menu' },
         item('Công thức pha chế', () => viewSoon('Công thức pha chế'), soon.cloneNode(true)),

@@ -508,3 +508,20 @@ html.swiping #app { background: var(--bg); box-shadow: -10px 0 28px rgba(0,0,0,.
   .welcome.intro .w-bg, .welcome.intro .w-mark, .welcome.intro .w-mid h2.title, .welcome.intro .w-sub,
   .welcome.intro .quote, .welcome.intro > .btn { animation-name: w-fade; animation-duration: .4s; }
 }
+
+/* nhãn chủ đề thông báo: nền nhạt + chữ đậm cùng tông, đủ tương phản để đọc */
+.tag { display: inline-block; font: 600 11px/1 var(--sans); letter-spacing: .01em; padding: 4px 7px; border-radius: 6px; vertical-align: 1px; }
+.tag.gray, .tagchip.gray { --tg: #5c5c61; --tb: #ececef; }
+.tag.blue, .tagchip.blue { --tg: #0b5cad; --tb: #e3eefb; }
+.tag.green, .tagchip.green { --tg: #1e6b3a; --tb: #e2f2e7; }
+.tag.amber, .tagchip.amber { --tg: #8a5200; --tb: #fbeed6; }
+.tag.violet, .tagchip.violet { --tg: #6a3aa8; --tb: #efe7fa; }
+.tag.red, .tagchip.red { --tg: #b3261e; --tb: #fce6e4; }
+.tag { color: var(--tg); background: var(--tb); }
+.nmeta { display: flex; align-items: center; gap: 8px; }
+.notices .nmeta { margin-top: 5px; }
+.tagpick { margin-top: 0; }
+.tagchip { color: var(--tg); background: var(--tb); border-color: transparent; font-weight: 500; }
+.tagchip.on { color: #fff; background: var(--tg); border-color: var(--tg); }
+.n-by { margin-top: 18px; }
+.btn.danger { color: #b3261e; margin-top: 20px; }

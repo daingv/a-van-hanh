@@ -40,15 +40,16 @@
       next: { ...blk(1, 15, 23, 'C+T'), keeper: !isHead },
       month: { label: 'tháng ' + (new Date().getMonth() + 1), recap: new Date().getDate() === 1, days: 14, minutes: 6420, nightMinutes: 95,
         late: 2, lateMin: 17, early: 0, earlyMin: 0, forgot: 1, pending: 0 },
-      notices: [
-        { title: 'Từ thứ Hai, mở cửa sớm 30 phút', body: 'Từ thứ Hai tuần sau quán mở cửa lúc 7:00.\nCa sáng chấm vào trước 6:50 để kịp setup quầy.\n\nAi vướng lịch báo head-barista trước Chủ nhật nhé.', date: at(0, 9, 0), img: false },
-        { title: 'Menu trà mùa đông', body: 'Ba món mới lên menu từ 1/12. Xem ảnh công thức bên dưới, tuần này mỗi bạn pha thử ít nhất một lần.', date: at(-2, 10, 0), img: true }]
+      notices: NOTICES || (NOTICES = [
+        { title: 'Từ thứ Hai, mở cửa sớm 30 phút', body: 'Từ thứ Hai tuần sau quán mở cửa lúc 7:00.\nCa sáng chấm vào trước 6:50 để kịp setup quầy.\n\nAi vướng lịch báo head-barista trước Chủ nhật nhé.', date: at(0, 9, 0), img: false, tag: 'Lịch ca', by: 'Nguyễn Trâm Anh' },
+        { title: 'Menu trà mùa đông', body: 'Ba món mới lên menu từ 1/12. Xem ảnh công thức bên dưới, tuần này mỗi bạn pha thử ít nhất một lần.', date: at(-2, 10, 0), img: true, tag: 'Công thức', by: 'Nguyễn Trâm Anh' }])
     };
     if (isHead) out.team = { openingDone: true, notIn: [{ name: 'Hoàng Ngọc Tú', start: '08:00' }],
       lastClosing: { at: at(-1, 22, 40), by: 'Nguyễn Trâm Anh', shift: 'T', diffCash: -50000, uCash: 0, diffBank: -100000, uBank: -100000 } };
     return out;
   };
 
+  let NOTICES = null;
   window.MOCK_API = async (b) => {
     await wait(b.action === 'uploadPhoto' ? 500 : 300);
     if (b.action === 'staffList') return ok(Object.keys(staff));
@@ -112,6 +113,13 @@
           zaloText: `(á) · Chốt ca (thử)\nGiữ ca: ${b.name}\nDoanh thu iPOS: ${fmt(m.ipRevenue)}\nKét: lệch ${fmt(dC)}\nGiao ca sau: ${(b.handover || []).map(h => h.text).join(' · ') || '—'}` });
       }
       case 'approvals': return isHead ? ok(approvals) : err('Chỉ head-barista hoặc chủ quán được làm việc này');
+      case 'postNotice':
+        if (!isHead) return err('Chỉ head-barista hoặc chủ quán được làm việc này');
+        NOTICES.unshift({ title: b.title.trim(), body: b.body.trim(), date: Date.now(), img: !!b.photo, tag: b.tag, by: b.name || 'Bạn' });
+        return ok({ notices: NOTICES });
+      case 'deleteNotice':
+        NOTICES.splice(b.i, 1);
+        return ok({ notices: NOTICES });
       case 'approve':
         approvals = approvals.filter(a => a.id !== b.id);
         return ok({ status: b.op === 'edit' ? 'đã sửa' : 'đã duyệt' });
