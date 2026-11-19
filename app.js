@@ -170,17 +170,17 @@
     };
     const setSt = (txt, cls) => { st.hidden = !txt; st.textContent = txt || ''; st.className = 'st' + (cls ? ' ' + cls : ''); };
     async function doUpload(file) {
-      setSt('đang tải…');
+      setSt('Đang tải…');
       store[key] = { file, id: null, label };
       opts.onChange && opts.onChange();
       try {
         const id = await upload(file, label);
         if (store[key] && store[key].file === file) {
           store[key].id = id;
-          setSt('✓', 'ok');
+          setSt('Đã tải', 'ok');
         }
       } catch (e) {
-        setSt('lỗi · chạm ảnh để chụp lại', 'bad');
+        setSt('Lỗi · chạm ảnh để chụp lại', 'bad');
         toast(e.message, true);
       }
       opts.onChange && opts.onChange();
@@ -197,7 +197,7 @@
     });
     if (store[key] && store[key].file) {
       show(store[key].file);
-      setSt(store[key].id ? '✓' : 'chưa tải · chạm để chụp lại', store[key].id ? 'ok' : 'bad');
+      setSt(store[key].id ? 'đã tải' : 'chưa tải · chạm để chụp lại', store[key].id ? 'ok' : 'bad');
     }
     el.trigger = () => input.click();
     return el;
@@ -216,8 +216,15 @@
     window.scrollTo(0, 0);
   }
   const brand = (small) => h('header', { class: 'brand' + (small ? ' small' : '') },
-    h('h1', { text: 'đội hình\nbạn pha trà' }), h('div', { class: 'at', text: 'ở  ( á )' }));
-  const back = () => h('button', { class: 'back', onclick: () => viewHome() }, '‹ về trang chính');
+    h('div', { class: 'mark', text: '(á)' }), h('h1', { text: 'Đội hình bạn pha trà' }));
+  // chỉ 5 biểu tượng nét mảnh: tiếp, quay lại, xong, xoá, thêm
+  const ICO = { next: 'M9 5l7 7-7 7', back: 'M15 5l-7 7 7 7', check: 'M5 12.5l4.5 4.5L19 7.5', close: 'M6 6l12 12M18 6L6 18', add: 'M12 5v14M5 12h14' };
+  const ico = n => {
+    const NS = 'http://www.w3.org/2000/svg', v = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
+    v.setAttribute('viewBox', '0 0 24 24'); v.setAttribute('class', 'ico'); v.setAttribute('aria-hidden', 'true');
+    p.setAttribute('d', ICO[n]); v.append(p); return v;
+  };
+  const back = () => h('button', { class: 'back', onclick: () => viewHome() }, ico('back'), 'Trang chính');
   const spinner = txt => h('p', { class: 'sub' }, h('span', { class: 'spin' }), txt);
 
   function logout() {
@@ -246,13 +253,13 @@
     const draw = (names, loading) => {
       if (token !== loginToken) return;
       const sorted = last && names.includes(last) ? [last, ...names.filter(n => n !== last)] : names;
-      render(brand(), h('h3', { text: 'bạn là ai?' }),
+      render(brand(), h('h3', { text: 'Bạn là ai?' }),
         h('div', { class: 'names' }, sorted.map(n => h('button', { class: n === last ? 'last' : '', onclick: () => viewPin(n) }, n))),
         loading ? h('p', { class: 'hint', style: 'margin-top:14px' }, h('span', { class: 'spin' }), 'đang cập nhật danh sách…') : '');
     };
     const cached = store.get('a-names');
     if (cached && cached.length) draw(cached, true);
-    else render(brand(), spinner('đang tải danh sách…'));
+    else render(brand(), spinner('Đang tải danh sách…'));
     let names;
     try { names = await api('staffList', {}, false); } catch (e) {
       if (token !== loginToken) return;
@@ -302,13 +309,13 @@
     const msg = h('p', { class: 'hint', style: 'text-align:center' });
     const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
     render(brand(true),
-      h('button', { class: 'back', onclick: viewLogin }, '‹ chọn lại tên'),
+      h('button', { class: 'back', onclick: viewLogin }, ico('back'), 'Chọn lại tên'),
       h('h2', { class: 'title', text: firstName(name) }),
-      h('p', { class: 'sub', text: 'nhập PIN 6 số' }),
+      h('p', { class: 'sub', text: 'Nhập PIN 6 số' }),
       dots, msg,
       h('div', { class: 'keypad' }, keys.map(k => h('button', {
         class: k ? '' : 'blank', 'aria-label': k === '⌫' ? 'xoá' : k, onclick: () => k && press(k)
-      }, k))));
+      }, k === '⌫' ? ico('close') : k))));
   }
 
   // ---------- trang chính ----------
@@ -342,38 +349,38 @@
   }
 
   function summaryPanel(sm) {
-    if (!sm) return h('div', { class: 'summary' }, h('div', { class: 'sbox' }, spinner('đang tải ca hôm nay…')));
+    if (!sm) return h('div', { class: 'summary' }, h('div', { class: 'sbox' }, spinner('Đang tải ca hôm nay…')));
     const t = sm.today, b = t.block, mo = sm.month;
     const row = (k, v, cls) => h('div', { class: 'srow' }, h('span', { class: 'k', text: k }), h('span', { class: 'v' + (cls ? ' ' + cls : ''), text: v }));
     const parts = [];
 
     // ca hôm nay
-    const todayBox = [h('div', { class: 'stitle', text: 'ca hôm nay' })];
+    const todayBox = [h('div', { class: 'stitle', text: 'Ca hôm nay' })];
     if (b) {
       todayBox.push(h('div', { class: 'sbig', text: `${b.codes} · ${b.startHM}–${b.endHM}` }));
-      if (t.clock.state === 'in') todayBox.push(h('div', { class: 'ok', text: `● đang trong ca từ ${hm(new Date(t.clock.since))} · ${dur(t.workedMin)}` }));
-      else if (t.clock.state === 'late') todayBox.push(h('div', { class: 'warn', text: `⚠ đã tới giờ ca (${b.startHM}) nhưng chưa chấm vào` }));
-      else if (b.start > now().getTime()) todayBox.push(h('div', { class: 'hint', text: `bắt đầu ${b.startHM} · ${countdown(b.start)}` }));
-      else if (t.workedMin) todayBox.push(h('div', { class: 'hint', text: `đã làm hôm nay: ${dur(t.workedMin)}` }));
+      if (t.clock.state === 'in') todayBox.push(h('div', { class: 'ok', text: `Đang trong ca từ ${hm(new Date(t.clock.since))} · ${dur(t.workedMin)}` }));
+      else if (t.clock.state === 'late') todayBox.push(h('div', { class: 'warn', text: `Đã tới giờ ca (${b.startHM}) nhưng chưa chấm vào` }));
+      else if (b.start > now().getTime()) todayBox.push(h('div', { class: 'hint', text: `Bắt đầu ${b.startHM} · ${countdown(b.start)}` }));
+      else if (t.workedMin) todayBox.push(h('div', { class: 'hint', text: `Đã làm hôm nay: ${dur(t.workedMin)}` }));
     } else {
-      todayBox.push(h('div', { class: 'sbig', text: 'hôm nay bạn nghỉ' }));
-      if (t.clock.state === 'in') todayBox.push(h('div', { class: 'ok', text: `● đang trong ca từ ${hm(new Date(t.clock.since))} · ${dur(t.workedMin)}` }));
+      todayBox.push(h('div', { class: 'sbig', text: 'Hôm nay bạn nghỉ' }));
+      if (t.clock.state === 'in') todayBox.push(h('div', { class: 'ok', text: `Đang trong ca từ ${hm(new Date(t.clock.since))} · ${dur(t.workedMin)}` }));
     }
-    if (t.mates.length) todayBox.push(h('div', { class: 'hint', text: 'đang trong ca: ' + t.mates.map(firstName).join(', ') }));
+    if (t.mates.length) todayBox.push(h('div', { class: 'hint', text: 'Đang trong ca: ' + t.mates.map(firstName).join(', ') }));
     parts.push(h('div', { class: 'sbox' }, ...todayBox));
 
     // việc trong ca
     if (t.items.length) {
       const done = t.items.filter(x => x.done).length;
       parts.push(h('div', { class: 'sbox' },
-        h('div', { class: 'stitle' }, 'việc trong ca', h('span', { class: 'scount', text: `${done}/${t.items.length}` })),
+        h('div', { class: 'stitle' }, 'Việc trong ca', h('span', { class: 'scount', text: `${done}/${t.items.length}` })),
         h('div', { class: 'bar' }, h('i', { style: `width:${Math.round(100 * done / t.items.length)}%` })),
         h('ul', { class: 'checks' }, t.items.map(x => {
           const go = !x.done && itemAction(x);
-          const body = [h('span', { class: 'mark', text: x.done ? '✓' : '○' }),
-            h('span', { class: 'txt' }, x.text, x.note ? h('small', { text: ' · ' + x.note }) : '')];
+          const body = [h('span', { class: 'mark' }, x.done ? ico('check') : ''),
+            h('span', { class: 'txt' }, x.text, x.note ? h('small', { text: x.note }) : '')];
           return h('li', { class: x.done ? 'done' : go ? 'go' : '' },
-            go ? h('button', { type: 'button', onclick: go }, ...body, h('span', { class: 'arrow', text: '›' })) : body);
+            go ? h('button', { type: 'button', onclick: go }, ...body, h('span', { class: 'arrow' }, ico('next'))) : body);
         }))));
     }
 
@@ -381,21 +388,21 @@
     if (sm.next) {
       const n = sm.next;
       parts.push(h('div', { class: 'sbox' },
-        h('div', { class: 'stitle', text: 'ca tiếp theo' }),
+        h('div', { class: 'stitle', text: 'Ca tiếp theo' }),
         h('div', { class: 'sbig', text: `${dayLabel(n.start)} · ${n.codes} ${n.startHM}–${n.endHM}` }),
         h('div', { class: 'hint', text: countdown(n.start) }),
-        h('button', { class: 'linkbtn more', onclick: () => viewWeek(0) }, 'xem lịch cả tuần ›')));
+        h('button', { class: 'linkbtn more', onclick: () => viewWeek(0) }, 'Xem lịch cả tuần', ico('next'))));
     }
 
     // tháng này / tổng kết tháng trước
     parts.push(h('div', { class: 'sbox' },
       h('div', { class: 'stitle', text: mo.recap ? `tổng kết ${mo.label}` : mo.label }),
-      row('số buổi · giờ công', `${mo.days} buổi · ${dur(mo.minutes)}`),
-      mo.nightMinutes ? row('sau 23h', dur(mo.nightMinutes)) : '',
-      row('đi muộn', mo.late ? `${mo.late} lần · ${mo.lateMin} phút` : 'không', mo.late ? 'warn' : 'ok'),
-      row('về sớm', mo.early ? `${mo.early} lần · ${mo.earlyMin} phút` : 'không', mo.early ? 'warn' : 'ok'),
-      row('quên chấm ra', mo.forgot ? `${mo.forgot} lần` : 'không', mo.forgot ? 'warn' : 'ok'),
-      mo.pending ? row('lượt đang chờ duyệt', String(mo.pending), 'warn') : ''));
+      row('Số buổi · giờ công', `${mo.days} buổi · ${dur(mo.minutes)}`),
+      mo.nightMinutes ? row('Sau 23h', dur(mo.nightMinutes)) : '',
+      row('Đi muộn', mo.late ? `${mo.late} lần · ${mo.lateMin} phút` : 'không', mo.late ? 'warn' : 'ok'),
+      row('Về sớm', mo.early ? `${mo.early} lần · ${mo.earlyMin} phút` : 'không', mo.early ? 'warn' : 'ok'),
+      row('Quên chấm ra', mo.forgot ? `${mo.forgot} lần` : 'không', mo.forgot ? 'warn' : 'ok'),
+      mo.pending ? row('Lượt đang chờ duyệt', String(mo.pending), 'warn') : ''));
 
     // cả quán hôm nay (head-barista / chủ quán)
     if (sm.team) {
@@ -405,10 +412,10 @@
       const lcText = !lc ? 'chưa có' : `ca ${lc.shift} ${dayLabel(lc.at)} ${hm(new Date(lc.at))} · ${firstName(lc.by)} · ` +
         lech('két', lc.diffCash, lc.uCash) + ' · ' + lech('CK', lc.diffBank, lc.uBank);
       parts.push(h('div', { class: 'sbox' },
-        h('div', { class: 'stitle', text: 'cả quán hôm nay' }),
-        row('báo cáo đầu ca', tm.openingDone ? 'đã có ✓' : 'chưa có', tm.openingDone ? 'ok' : 'warn'),
-        row('tới giờ chưa chấm vào', tm.notIn.length ? tm.notIn.map(x => `${firstName(x.name)} (${x.start})`).join(', ') : 'không', tm.notIn.length ? 'warn' : 'ok'),
-        h('div', { class: 'hint', style: 'margin-top:6px', text: 'chốt ca gần nhất: ' + lcText })));
+        h('div', { class: 'stitle', text: 'Cả quán hôm nay' }),
+        row('Báo cáo đầu ca', tm.openingDone ? 'đã có' : 'chưa có', tm.openingDone ? 'ok' : 'warn'),
+        row('Tới giờ chưa chấm vào', tm.notIn.length ? tm.notIn.map(x => `${firstName(x.name)} (${x.start})`).join(', ') : 'không', tm.notIn.length ? 'warn' : 'ok'),
+        h('div', { class: 'hint', style: 'margin-top:6px', text: 'Chốt ca gần nhất: ' + lcText })));
     }
     return h('div', { class: 'summary' }, ...parts);
   }
@@ -418,8 +425,8 @@
     const c = i.cfg;
     const m = now().getHours() * 60 + now().getMinutes();
     const openWindow = m >= hmToMin(c.openFrom) && m <= hmToMin(c.openTo);
-    const item = (label, fn, extra) => h('li', null, h('button', { onclick: fn }, label), extra);
-    const soon = h('span', { class: 'soon', text: 'sắp có' });
+    const item = (label, fn, extra) => h('li', null, h('button', { onclick: fn }, h('span', { class: 'ml' }, label), extra));
+    const soon = h('span', { class: 'soon', text: 'Sắp có' });
     const panel = h('div', null, summaryPanel(i.summary));
     const resend = h('div');
     const resendItem = h('li', { hidden: true });
@@ -430,43 +437,44 @@
       if (left.length) {
         resend.replaceChildren(h('div', { class: 'alert', style: 'margin-bottom:22px' },
           h('div', { text: `${rec.title} lúc ${hm(new Date(rec.at))} chưa gửi ${left.join(' và ')} vào Zalo.` }),
-          h('button', { class: 'btn', style: 'margin-top:10px', onclick: open }, 'mở lại để gửi')));
+          h('button', { class: 'btn', style: 'margin-top:10px', onclick: open }, 'Mở lại để gửi')));
       }
       resendItem.hidden = false;
-      resendItem.replaceChildren(h('button', { onclick: open }, 'gửi lại báo cáo gần nhất vào Zalo'));
+      resendItem.replaceChildren(h('button', { onclick: open }, 'Gửi lại báo cáo gần nhất vào Zalo'));
     });
     // lấy số mới nhất mỗi lần về trang chủ (sau khi chấm công, gửi báo cáo…), không chặn màn hình
     api('summary').then(sm => {
       i.summary = sm;
       if (panel.isConnected) panel.replaceChildren(summaryPanel(sm));
     }).catch(() => {});
-    render(brand(),
-      h('div', { class: 'greet' }, h('p', null, `chào ${firstName(i.name)} · ${WD[now().getDay()]} ${pad(now().getDate())}/${pad(now().getMonth() + 1)}`)),
+    render(
+      h('div', { class: 'greet' }, h('p', { class: 'date', text: `${WD[now().getDay()]}, ${pad(now().getDate())}/${pad(now().getMonth() + 1)}` }),
+        h('h2', { class: 'title', text: 'Chào ' + firstName(i.name) })),
       resend,
       panel,
       h('ul', { class: 'menu' },
-        item('báo cáo đầu ca', viewOpening, openWindow ? null : h('span', { class: 'soon', text: `ngoài giờ ${c.openFrom}–${c.openTo}` })),
-        item('chấm công', viewClock),
-        item('báo cáo chốt ca', viewClosing),
-        item('lịch tuần', () => viewWeek(0)),
+        item('Báo cáo đầu ca', viewOpening, openWindow ? null : h('span', { class: 'soon', text: `Ngoài giờ ${c.openFrom}–${c.openTo}` })),
+        item('Chấm công', viewClock),
+        item('Báo cáo chốt ca', viewClosing),
+        item('Lịch tuần', () => viewWeek(0)),
         resendItem,
-        item('báo phát sinh', () => viewSoon('báo phát sinh'), soon.cloneNode(true)),
-        i.isHead ? item('duyệt công', viewApprovals, i.pendingApprovals ? h('span', { class: 'count', text: i.pendingApprovals }) : null) : null,
+        item('Báo phát sinh', () => viewSoon('Báo phát sinh'), soon.cloneNode(true)),
+        i.isHead ? item('Duyệt công', viewApprovals, i.pendingApprovals ? h('span', { class: 'count', text: i.pendingApprovals }) : null) : null,
         h('hr'),
-        item('công thức pha chế', () => viewSoon('công thức pha chế'), soon.cloneNode(true)),
-        item('xử lý tình huống khách hàng', () => viewSoon('xử lý tình huống khách hàng'), soon.cloneNode(true)),
-        item('tra cứu sự cố', () => viewSoon('tra cứu sự cố'), soon.cloneNode(true)),
-        item('danh sách liên hệ', () => viewSoon('danh sách liên hệ'), soon.cloneNode(true)),
+        item('Công thức pha chế', () => viewSoon('Công thức pha chế'), soon.cloneNode(true)),
+        item('Xử lý tình huống khách hàng', () => viewSoon('Xử lý tình huống khách hàng'), soon.cloneNode(true)),
+        item('Tra cứu sự cố', () => viewSoon('Tra cứu sự cố'), soon.cloneNode(true)),
+        item('Danh sách liên hệ', () => viewSoon('Danh sách liên hệ'), soon.cloneNode(true)),
         h('hr'),
-        item('đăng xuất', logout)));
+        item('Đăng xuất', logout)));
   }
 
   // ---------- lịch tuần ----------
   async function viewWeek(week) {
     const seg = h('div', { class: 'seg', style: 'margin:4px 0 6px' }, ['tuần này', 'tuần sau'].map((t, k) =>
       h('button', { type: 'button', class: k === week ? 'on' : '', onclick: () => k !== week && viewWeek(k) }, t)));
-    const body = h('div', null, spinner('đang tải lịch…'));
-    render(back(), h('h2', { class: 'title', text: 'lịch tuần' }), seg, h('div', { style: 'height:14px' }), body);
+    const body = h('div', null, spinner('Đang tải lịch…'));
+    render(back(), h('h2', { class: 'title', text: 'Lịch tuần' }), seg, h('div', { style: 'height:14px' }), body);
     let data;
     try { data = await api('week', { week }); } catch (e) {
       body.replaceChildren(h('p', { class: 'alert bad', text: e.message }), h('button', { class: 'btn', onclick: () => viewWeek(week) }, 'Thử lại'));
@@ -514,9 +522,9 @@
       const lines = periods.map((P, k) => periodLine(d, P, k)).filter(Boolean);
       const mineTxt = mine.map(b => `${hh((b.start - d.ts) / 60000)}–${hh((b.end - d.ts) / 60000)}`).join(' và ');
       const card = h('div', { class: 'sbox day' + (isToday ? ' today' : '') + (past ? ' past' : '') },
-        h('div', { class: 'stitle' }, `${WD[dt.getDay()]} · ${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}`, isToday ? h('span', { class: 'scount', text: 'hôm nay' }) : ''),
+        h('div', { class: 'stitle' }, `${WD[dt.getDay()]} · ${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}`, isToday ? h('span', { class: 'scount', text: 'Hôm nay' }) : ''),
         h('div', { class: 'mine' + (mine.length ? '' : ' off'), text: mine.length ? 'bạn làm ' + mineTxt : 'bạn nghỉ' }),
-        lines.length ? h('ul', { class: 'shifts' }, lines) : h('p', { class: 'hint', text: 'chưa xếp lịch' }));
+        lines.length ? h('ul', { class: 'shifts' }, lines) : h('p', { class: 'hint', text: 'Chưa xếp lịch' }));
       if (isToday) todayCard = card;
       return card;
     });
@@ -542,12 +550,12 @@
 
   function viewClock() {
     const type = S.info.openSince ? 'out' : 'in';
-    const verb = type === 'in' ? 'chấm vào' : 'chấm ra';
+    const verb = type === 'in' ? 'Chấm vào' : 'Chấm ra';
     const locP = getLocation(); // xin vị trí ngay khi mở màn hình
     const store = {};
     const status = h('p', { class: 'sub' });
     let sending = false;
-    const slot = photoSlot(store, 'selfie', 'selfie ' + verb, { selfie: true, wide: true, required: true, onChange: () => {
+    const slot = photoSlot(store, 'selfie', 'selfie ' + verb.toLowerCase(), { selfie: true, wide: true, required: true, onChange: () => {
       const s = store.selfie;
       btn.disabled = !(s && s.id) || sending;
     } });
@@ -566,7 +574,7 @@
     } }, verb);
     status.textContent = type === 'in' ? 'Chụp selfie rồi bấm chấm vào. Giờ lấy từ máy chủ.'
       : `Đang trong ca từ ${hm(new Date(S.info.openSince))}. Chụp selfie rồi bấm chấm ra.`;
-    render(back(), h('h2', { class: 'title', text: 'chấm công' }), status,
+    render(back(), h('h2', { class: 'title', text: 'Chấm công' }), status,
       h('div', { class: 'photos' }, slot), btn,
       h('p', { class: 'hint', text: 'Nếu điện thoại hỏi quyền vị trí, chọn Cho phép. Không cho phép vẫn chấm được, head-barista sẽ xem lại.' }));
   }
@@ -574,13 +582,13 @@
   function viewClockDone(r) {
     const t = new Date(r.time);
     render(back(),
-      h('div', { class: 'big-ok', text: 'đã gửi ✓' }),
-      h('h2', { class: 'title', text: `${r.type === 'in' ? 'vào ca' : 'ra ca'} lúc ${hm(t)}` }),
+      h('div', { class: 'big-ok', text: 'Đã gửi' }),
+      h('h2', { class: 'title', text: `${r.type === 'in' ? 'Vào ca' : 'Ra ca'} lúc ${hm(t)}` }),
       r.flags.length
         ? h('div', { class: 'alert' }, h('div', { text: 'Lượt này được ghi chú để head-barista xem lại:' }),
           h('ul', null, r.flags.map(f => h('li', { text: f }))))
         : h('p', { class: 'hint ok', text: 'Mọi thứ đều khớp.' }),
-      h('button', { class: 'btn', onclick: viewHome }, 'về trang chính'));
+      h('button', { class: 'btn', onclick: viewHome }, 'Về trang chính'));
   }
 
   // ---------- bàn giao (dùng chung đầu ca / chốt ca) ----------
@@ -592,11 +600,11 @@
       const body = h('div');
       const toggle = h('button', { class: 'linkbtn more', type: 'button' });
       const draw = () => {
-        toggle.textContent = sk.on ? '‹ quay lại, mình sẽ làm việc này' : 'không làm việc này (giao sai / không làm được)';
+        toggle.textContent = sk.on ? 'Quay lại, mình sẽ làm việc này' : 'Không làm việc này (giao sai / không làm được)';
         if (sk.on) {
-          const ta = h('textarea', { placeholder: 'ghi lý do, ví dụ: trân châu còn đủ, không cần nấu', value: sk.reason });
+          const ta = h('textarea', { placeholder: 'Ghi lý do, ví dụ: trân châu còn đủ, không cần nấu', value: sk.reason });
           ta.addEventListener('input', () => { sk.reason = ta.value; onChange(); });
-          body.replaceChildren(h('label', { class: 'f', text: 'lý do không làm (bắt buộc)' }), ta);
+          body.replaceChildren(h('label', { class: 'f', text: 'Lý do không làm (bắt buộc)' }), ta);
         } else {
           body.replaceChildren(h('div', { class: 'photos', style: 'margin-top:10px' },
             photoSlot(store, 'task:' + t.id, 'việc: ' + t.text.slice(0, 40), { onChange })));
@@ -613,8 +621,8 @@
   }
   const toText = t => t.to && t.to.length ? 'cho ' + t.to.map(firstName).join(', ') : 'cho cả ca sau';
   const taskInfo = tasks => h('ul', { class: 'checks info' }, tasks.map(t => h('li', null,
-    h('span', { class: 'mark', text: '•' }),
-    h('span', { class: 'txt' }, t.text, h('small', { text: ` · ${firstName(t.from)} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''} · ${toText(t)}` })))));
+    h('span', { class: 'mark' }),
+    h('span', { class: 'txt' }, t.text, h('small', { text: `${firstName(t.from)} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''} · ${toText(t)}` })))));
   const skipOf = (store, t) => { const sk = store['skip:' + t.id]; return sk && sk.on ? sk : null; };
   const completedTasks = (tasks, store) => tasks.map(t => {
     const sk = skipOf(store, t);
@@ -651,8 +659,8 @@
         S.info.pendingTasks = Math.max(0, (S.info.pendingTasks || 0) - 1);
         toast(d.skip ? 'Đã ghi: không làm việc này' : 'Đã báo xong. Ảnh sẽ tự vào báo cáo chốt ca.');
         viewHome();
-      } catch (e) { toast(e.message, true); submit.textContent = 'báo đã xong'; check(); }
-    } }, 'báo đã xong');
+      } catch (e) { toast(e.message, true); submit.textContent = 'Báo đã xong'; check(); }
+    } }, 'Báo đã xong');
     const check = () => {
       const ok = completedTasks([t], store).length > 0;
       const up = Object.values(store).some(p => p && p.file && !p.id);
@@ -660,7 +668,7 @@
       missing.textContent = up ? 'đang tải ảnh…' : ok ? '' : skipLacking([t], store).length
         ? 'ghi lý do không làm (ít nhất vài chữ)' : 'chụp ảnh kết quả, hoặc bấm "không làm việc này" và ghi lý do';
     };
-    render(back(), h('h2', { class: 'title', text: 'báo việc đã làm' }),
+    render(back(), h('h2', { class: 'title', text: 'Báo việc đã làm' }),
       h('p', { class: 'sub', text: 'Báo xong ở đây thì lúc chốt ca việc này và ảnh tự vào báo cáo, không cần báo lại.' }),
       taskList([t], store, check), missing, submit);
     check();
@@ -668,14 +676,14 @@
 
   // ---------- báo cáo đầu ca ----------
   async function viewOpening() {
-    render(back(), h('h2', { class: 'title', text: 'báo cáo đầu ca' }), spinner('đang tải…'));
+    render(back(), h('h2', { class: 'title', text: 'Báo cáo đầu ca' }), spinner('Đang tải…'));
     let tasks = [];
     try { tasks = await api('tasks'); } catch (e) { toast(e.message, true); }
     const areas = S.info.cfg.areas;
     const key = draftKey('dau-ca');
     const saved = (await DB.get(key)) || {};
     const store = saved.photos || {};
-    const note = h('textarea', { placeholder: 'ghi chú (không bắt buộc)', value: saved.note || '' });
+    const note = h('textarea', { placeholder: 'Ghi chú (không bắt buộc)', value: saved.note || '' });
     const missing = h('p', { class: 'missing' });
     const save = () => DB.set(key, { photos: store, note: note.value });
     const check = () => {
@@ -696,22 +704,22 @@
         await DB.del(key);
         await saveShare(r, files, 'báo cáo đầu ca');
         viewShare(r, files);
-      } catch (e) { toast(e.message, true); submit.textContent = 'gửi báo cáo'; check(); }
-    } }, 'gửi báo cáo');
-    render(back(), h('h2', { class: 'title', text: 'báo cáo đầu ca' }),
+      } catch (e) { toast(e.message, true); submit.textContent = 'Gửi báo cáo'; check(); }
+    } }, 'Gửi báo cáo');
+    render(back(), h('h2', { class: 'title', text: 'Báo cáo đầu ca' }),
       h('p', { class: 'sub', text: 'Chụp trực tiếp 7 khu vực sau khi mở quầy.' }),
-      tasks.length ? [h('h3', { text: 'ca trước bàn giao' }), taskInfo(tasks),
+      tasks.length ? [h('h3', { text: 'Ca trước bàn giao' }), taskInfo(tasks),
         h('p', { class: 'hint', text: 'Chỉ để biết, không cần làm ngay. Làm xong thì bấm vào việc đó ở trang chủ (việc trong ca) để báo.' })] : null,
-      h('h3', { text: 'ảnh khu vực' }),
+      h('h3', { text: 'Ảnh khu vực' }),
       h('div', { class: 'photos' }, areas.map(a => photoSlot(store, a, a, { required: true, onChange: check }))),
-      h('h3', { text: 'ghi chú' }), note,
+      h('h3', { text: 'Ghi chú' }), note,
       missing, submit);
     check();
   }
 
   // ---------- báo cáo chốt ca ----------
   async function viewClosing() {
-    render(back(), h('h2', { class: 'title', text: 'báo cáo chốt ca' }), spinner('đang tải…'));
+    render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }), spinner('Đang tải…'));
     let tasks = [];
     try { tasks = await api('tasks'); } catch (e) { toast(e.message, true); }
     const earlier = await loadDone();
@@ -729,7 +737,7 @@
     // tiền
     const moneyField = (k, label, opt) => {
       const inp = h('input', { type: 'text', inputmode: 'numeric', class: 'money', autocomplete: 'off',
-        placeholder: opt ? 'không bắt buộc' : '0', value: F.money[k] !== undefined && F.money[k] !== '' ? money(F.money[k]).replace('đ', '') : '' });
+        placeholder: opt ? 'Không bắt buộc' : '0', value: F.money[k] !== undefined && F.money[k] !== '' ? money(F.money[k]).replace('đ', '') : '' });
       inp.addEventListener('input', () => {
         const digits = inp.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
         F.money[k] = digits === '' ? '' : Number(digits);
@@ -741,7 +749,7 @@
 
     const cashBox = h('div', { class: 'cash' });
     const reasonWrap = h('div');
-    const reason = h('textarea', { placeholder: 'ví dụ: chưa rõ, đang xem lại camera', value: F.reason });
+    const reason = h('textarea', { placeholder: 'Ví dụ: chưa rõ, đang xem lại camera', value: F.reason });
     reason.addEventListener('input', () => { F.reason = reason.value; update(); });
 
     // giải trình: nằm ngay trong ô lệch của từng loại tiền (TM / CK)
@@ -761,11 +769,11 @@
       const dirSeg = segBtns(['thiếu', 'thừa'], () => e.dir, k => { e.dir = k; });
       const amt = h('input', { type: 'text', placeholder: '50k', value: e.raw, autocomplete: 'off' });
       const prev = h('div', { class: 'hint' });
-      const rsn = h('input', { type: 'text', placeholder: 'lý do, ví dụ: khách ship chưa chuyển khoản', value: e.reason, autocomplete: 'off' });
+      const rsn = h('input', { type: 'text', placeholder: 'Lý do, ví dụ: khách ship chưa chuyển khoản', value: e.reason, autocomplete: 'off' });
       const unk = h('button', { type: 'button', class: 'chip' + (e.unknown ? ' on' : ''), onclick: () => {
         e.unknown = !e.unknown; unk.classList.toggle('on', e.unknown); rsn.disabled = e.unknown;
         rsn.value = e.unknown ? 'chưa rõ nguyên nhân' : e.reason; update();
-      } }, 'chưa rõ nguyên nhân');
+      } }, 'Chưa rõ nguyên nhân');
       if (e.unknown) { rsn.disabled = true; rsn.value = 'chưa rõ nguyên nhân'; }
       const paint = () => {
         const v = parseMoney(amt.value);
@@ -779,7 +787,7 @@
       paint();
       const row = h('div', { class: 'exrow' },
         h('div', { class: 'row' }, dirSeg, h('div', { class: 'grow' }, amt),
-          h('button', { class: 'x', type: 'button', 'aria-label': 'xoá dòng', onclick: () => { F.explains.splice(F.explains.indexOf(e), 1); drawEx(); update(); } }, '×')),
+          h('button', { class: 'x', type: 'button', 'aria-label': 'xoá dòng', onclick: () => { F.explains.splice(F.explains.indexOf(e), 1); drawEx(); update(); } }, ico('close'))),
         prev, h('div', { style: 'margin-top:6px' }, rsn), h('div', { class: 'chips', style: 'margin-top:6px' }, unk));
       row.focusAmount = () => amt.focus();
       row.focusReason = () => rsn.focus();
@@ -831,39 +839,69 @@
     }
 
     // tồn
+    // chọn đơn vị ml / g cho từng món
+    const unitSeg = (get, set) => {
+      const box = h('div', { class: 'seg useg' }, ['ml', 'g'].map(u => h('button', { type: 'button', class: get() === u ? 'on' : '', onclick: () => {
+        set(u); box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.textContent === u)); save();
+      } }, u)));
+      return box;
+    };
     const stockWrap = h('div', null, items.map(it => {
       const st = F.stock[it.name] = F.stock[it.name] || { left: '', refill: '', on: false };
-      const inp = h('input', { type: 'text', inputmode: 'decimal', value: st.left, 'aria-label': 'còn lại ' + it.name });
-      const set = v => { st.left = v; inp.value = v; update(); };
-      inp.addEventListener('input', () => { st.left = inp.value.replace(',', '.').replace(/[^\d.]/g, ''); inp.value = st.left; update(); });
-      const step = d => set(String(Math.max(0, (parseFloat(st.left) || 0) + d)));
+      // gõ tay số ml, chỉ nhận chữ số
+      const refUnit = h('span', { class: 'unit', text: st.unit || 'ml' });
+      const ml = v => String(v || '').replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+      const inp = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', value: st.left, 'aria-label': 'còn lại ' + it.name + ' (ml)' });
+      inp.addEventListener('input', () => { st.left = ml(inp.value); inp.value = st.left; update(); });
       const row = h('div', { class: 'stock' },
-        h('div', { class: 'name' }, it.name, it.unit ? h('div', { class: 'unit', text: it.unit }) : null),
-        h('div', { class: 'stepper' },
-          h('button', { type: 'button', 'aria-label': 'bớt', onclick: () => step(-1) }, '−'), inp,
-          h('button', { type: 'button', 'aria-label': 'thêm', onclick: () => step(1) }, '+')));
+        h('div', { class: 'name', text: it.name }),
+        h('div', { class: 'mlbox' }, inp, unitSeg(() => st.unit || 'ml', u => { st.unit = u; refUnit.textContent = u; })));
       if (evening) {
-        const rin = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'lượng đã bổ sung', value: st.refill, style: 'max-width:180px' });
-        rin.addEventListener('input', () => { st.refill = rin.value.replace(',', '.').replace(/[^\d.]/g, ''); rin.value = st.refill; save(); });
-        const box = h('div', { class: 'refill', hidden: !st.on }, rin, it.unit ? h('span', { class: 'unit', text: it.unit }) : null);
+        const rin = h('input', { type: 'text', inputmode: 'numeric', placeholder: 'Lượng đã bổ sung', autocomplete: 'off', value: st.refill, style: 'max-width:180px' });
+        rin.addEventListener('input', () => { st.refill = ml(rin.value); rin.value = st.refill; save(); });
+        const box = h('div', { class: 'refill', hidden: !st.on }, rin, refUnit);
         const chip = h('button', { type: 'button', class: 'chip' + (st.on ? ' on' : ''), onclick: () => {
           st.on = !st.on; chip.classList.toggle('on', st.on); box.hidden = !st.on; if (!st.on) { st.refill = ''; rin.value = ''; } save();
-        } }, 'đã làm mới');
+        } }, 'Đã làm mới');
         row.append(chip, box);
       }
       return row;
     }));
+
+    // ca tối: kiểm nguyên liệu chi tiết, chia theo nhóm (chủ quán sửa danh sách ở CaiDat cột O:Q)
+    const evItems = evening ? (c.evening || []) : [];
+    F.evening = F.evening || {};
+    F.evUnit = F.evUnit || {};
+    const evWrap = h('div');
+    if (evItems.length) {
+      const groups = [...new Set(evItems.map(it => it.group))];
+      groups.forEach(g => {
+        evWrap.append(h('div', { class: 'evgroup', text: g }));
+        evItems.filter(it => it.group === g).forEach(it => {
+          if (F.evening[it.name] === undefined) F.evening[it.name] = '';
+          const inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: F.evening[it.name], 'aria-label': it.name });
+          inp.addEventListener('input', () => {
+            let v = inp.value.replace(',', '.').replace(/[^\d.]/g, '');
+            const k = v.indexOf('.');
+            if (k >= 0) v = v.slice(0, k + 1) + v.slice(k + 1).replace(/\./g, '');
+            F.evening[it.name] = v; inp.value = v; update();
+          });
+          evWrap.append(h('div', { class: 'stock' }, h('div', { class: 'name', text: it.name }),
+            h('div', { class: 'mlbox' }, inp, unitSeg(() => F.evUnit[it.name] || (it.unit === 'g' ? 'g' : 'ml'), u => { F.evUnit[it.name] = u; }))));
+        });
+      });
+    }
 
     // việc khác (tự điền) và giao ca sau
     const othersWrap = h('div');
     function drawOthers() {
       othersWrap.replaceChildren(...F.others.map((o, idx) => {
         o.k = o.k || 'other:' + Date.now() + ':' + idx;
-        const inp = h('input', { type: 'text', placeholder: 'việc đã làm', value: o.text });
+        const inp = h('input', { type: 'text', placeholder: 'Việc đã làm', value: o.text });
         inp.addEventListener('input', () => { o.text = inp.value; save(); });
         return h('div', { class: 'card' },
           h('div', { class: 'row' }, h('div', { class: 'grow' }, inp),
-            h('button', { class: 'x', type: 'button', 'aria-label': 'xoá', onclick: () => { delete store[o.k]; F.others.splice(F.others.indexOf(o), 1); drawOthers(); update(); } }, '×')),
+            h('button', { class: 'x', type: 'button', 'aria-label': 'xoá', onclick: () => { delete store[o.k]; F.others.splice(F.others.indexOf(o), 1); drawOthers(); update(); } }, ico('close'))),
           h('div', { class: 'photos', style: 'margin-top:10px' }, photoSlot(store, o.k, 'việc khác (ảnh không bắt buộc)', { onChange: update })));
       }));
     }
@@ -871,12 +909,12 @@
     const staffNames = S.info.staff || [];
     function drawHand() {
       handWrap.replaceChildren(...F.handover.map(t => {
-        const inp = h('input', { type: 'text', placeholder: 'ví dụ: nấu 2 nồi trân châu', value: t.text });
+        const inp = h('input', { type: 'text', placeholder: 'Ví dụ: nấu 2 nồi trân châu', value: t.text });
         inp.addEventListener('input', () => { t.text = inp.value; save(); });
         t.to = Array.isArray(t.to) ? t.to.filter(n => staffNames.includes(n)) : [];
         const who = h('div', { class: 'chips' });
         const drawWho = () => who.replaceChildren(
-          h('span', { class: 'hint', text: 'giao cho:' }),
+          h('span', { class: 'hint', text: 'Giao cho:' }),
           ...staffNames.filter(n => n !== S.name).map(n => h('button', { type: 'button', class: 'chip' + (t.to.includes(n) ? ' on' : ''),
             'aria-pressed': t.to.includes(n) ? 'true' : 'false',
             onclick: () => { t.to = t.to.includes(n) ? t.to.filter(x => x !== n) : t.to.concat(n); drawWho(); save(); } }, firstName(n))),
@@ -884,19 +922,19 @@
         drawWho();
         return h('div', { class: 'card', style: 'margin:8px 0' },
           h('div', { class: 'row' }, h('div', { class: 'grow' }, inp),
-            h('button', { class: 'x', type: 'button', 'aria-label': 'xoá', onclick: () => { F.handover.splice(F.handover.indexOf(t), 1); drawHand(); save(); } }, '×')),
+            h('button', { class: 'x', type: 'button', 'aria-label': 'xoá', onclick: () => { F.handover.splice(F.handover.indexOf(t), 1); drawHand(); save(); } }, ico('close'))),
           who);
       }));
     }
 
-    const incident = h('textarea', { placeholder: 'không có thì để trống', value: F.incident });
+    const incident = h('textarea', { placeholder: 'Không có thì để trống', value: F.incident });
     incident.addEventListener('input', () => { F.incident = incident.value; save(); });
-    const note = h('textarea', { placeholder: 'không bắt buộc', value: F.note });
+    const note = h('textarea', { placeholder: 'Không bắt buộc', value: F.note });
     note.addEventListener('input', () => { F.note = note.value; save(); });
 
     const moneyPhotos = ['phiếu chốt ca iPOS'];
     const missing = h('div', { class: 'missing' });
-    const submit = h('button', { class: 'btn', onclick: send }, 'gửi báo cáo');
+    const submit = h('button', { class: 'btn', onclick: send }, 'Gửi báo cáo');
 
     function lacking() {
       const out = [];
@@ -910,6 +948,7 @@
       if (cc && cc.uB) out.push('giải trình chuyển khoản (còn ' + diffText(cc.uB) + ')');
       moneyPhotos.concat(c.areas).forEach(a => { if (!(store[a] && store[a].id)) out.push('ảnh ' + a); });
       items.forEach(it => { if (F.stock[it.name].left === '') out.push('tồn ' + it.name); });
+      evItems.forEach(it => { if (!String(F.evening[it.name] || '').length || F.evening[it.name] === '.') out.push(it.name); });
       return out.concat(skipLacking(tasks, store));
     }
 
@@ -923,28 +962,28 @@
           const has = b.rows.children.length > 0;
           b.sum.replaceChildren(
             h('div', { class: 'cline' }, h('span', { text: b.label }),
-              h('strong', { class: !d ? 'ok' : d < 0 ? 'minus' : 'plus', text: diffText(d) + (!d ? ' ✓' : '') })),
+              h('strong', { class: !d ? 'ok' : d < 0 ? 'minus' : 'plus', text: !d ? 'khớp' : diffText(d) })),
             h('div', { class: 'hint', text: detail }));
           // chỉ hiện chỗ giải trình khi đang lệch (hoặc đã có dòng giải trình)
           b.rows.hidden = !d && !has;
           b.add.hidden = !u;
-          b.add.textContent = has ? '+ thêm lý do khác' : `+ giải trình khoản ${d < 0 ? 'thiếu' : 'thừa'} này`;
+          b.add.replaceChildren(ico('add'), has ? 'Thêm lý do khác' : `Giải trình khoản ${d < 0 ? 'thiếu' : 'thừa'} này`);
           b.rest.replaceChildren(...(d || has ? [
-            ex ? h('div', { class: 'hint', text: `đã giải trình ${diffText(ex)}` }) : '',
-            h('div', { class: u ? 'warn' : 'ok', text: u ? `→ còn ${diffText(u)} chưa giải trình · phải khớp mới gửi được` : '→ đã khớp ✓' })] : []));
+            ex ? h('div', { class: 'hint', text: `Đã giải trình ${diffText(ex)}` }) : '',
+            h('div', { class: u ? 'warn' : 'ok', text: u ? `còn ${diffText(u)} chưa giải trình · phải khớp mới gửi được` : 'đã khớp' })] : []));
         };
         paintBlock(blockC, cc.dC, cc.exC, cc.uC,
           `đầu ca ${money(m.opening)} + iPOS ${money(m.ipCash)} = phải có ${money(m.opening + m.ipCash)} · đếm được ${money(m.cash)}`);
-        paintBlock(blockB, cc.dB, cc.exB, cc.uB, `iPOS ${money(m.ipBank)} · ngân hàng ${money(m.bank)}`);
+        paintBlock(blockB, cc.dB, cc.exB, cc.uB, `Ngân hàng ${money(m.bank)} · iPOS ${money(m.ipBank)}`);
       }
       cashWarn.replaceChildren(
         cc && cc.misKey ? h('div', { class: 'warn', text: 'Có thể bấm nhầm tiền mặt / chuyển khoản trên iPOS.' }) : '',
         cc && cc.over ? h('div', { class: 'bad', text: 'Lệch quá ' + money(c.th.alert) + ': nhắn riêng head-barista hoặc chủ quán ngay.' }) : '');
       const need = cc && cc.needReason;
-      reasonWrap.replaceChildren(...(need ? [h('label', { class: 'f', text: 'lý do lệch (bắt buộc vì vẫn lệch quá ' + money(c.th.note) + ')' }), reason] : []));
+      reasonWrap.replaceChildren(...(need ? [h('label', { class: 'f', text: 'Lý do lệch (bắt buộc vì vẫn lệch quá ' + money(c.th.note) + ')' }), reason] : []));
       const lack = lacking();
       const uploading = Object.values(store).some(p => p.file && !p.id);
-      missing.replaceChildren(...(lack.length ? [h('div', { text: `còn thiếu ${lack.length} mục:` }), h('div', { text: lack.join(' · ') })] : uploading ? ['đang tải ảnh…'] : []));
+      missing.replaceChildren(...(lack.length ? [h('div', { text: `Còn thiếu ${lack.length} mục:` }), h('div', { text: lack.join(' · ') })] : uploading ? ['đang tải ảnh…'] : []));
       submit.disabled = lack.length > 0 || uploading;
       save();
     }
@@ -960,7 +999,9 @@
           explains: F.explains.filter(e => String(e.raw || '').trim()).map(e => ({ kind: e.kind, dir: e.dir, raw: e.raw, reason: e.reason, unknown: !!e.unknown })),
           reason: F.reason,
           photos,
-          stock: Object.fromEntries(items.map(it => [it.name, { left: F.stock[it.name].left, refill: evening && F.stock[it.name].on ? F.stock[it.name].refill : '' }])),
+          eveningUnits: Object.fromEntries(evItems.map(it => [it.name, F.evUnit[it.name] || (it.unit === 'g' ? 'g' : 'ml')])),
+          stock: Object.fromEntries(items.map(it => [it.name, { unit: F.stock[it.name].unit || 'ml', left: F.stock[it.name].left, refill: evening && F.stock[it.name].on ? F.stock[it.name].refill : '' }])),
+          evening: Object.fromEntries(evItems.map(it => [it.name, F.evening[it.name]])),
           completed: completedTasks(tasks, store),
           others: F.others.filter(o => o.text.trim()).map(o => ({ text: o.text, photoId: store[o.k] && store[o.k].id })),
           handover: F.handover.filter(t => t.text.trim()).map(t => ({ text: t.text, to: t.to || [] })),
@@ -976,41 +1017,46 @@
         viewShare(r, files);
       } catch (e) {
         toast(e.message, true);
-        submit.textContent = 'gửi báo cáo';
+        submit.textContent = 'Gửi báo cáo';
         update();
       }
     }
 
-    render(back(), h('h2', { class: 'title', text: 'báo cáo chốt ca' }),
+    render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }),
       h('p', { class: 'sub', text: `Ca ${shift} · ${hm(now())}${saved.F ? ' · đã khôi phục bản nháp' : ''}` }),
-      h('h3', { text: 'tiền theo iPOS' }),
+      h('h3', { text: 'Tiền theo iPOS' }),
       moneyField('ipRevenue', 'Tổng doanh thu'), moneyField('ipCash', 'Tiền mặt'), moneyField('ipBank', 'Chuyển khoản'),
-      h('h3', { text: 'tiền thực tế' }),
+      h('h3', { text: 'Tiền thực tế' }),
       moneyField('opening', 'Tiền mặt đầu ca (tiền lẻ có sẵn trong két lúc nhận ca)'),
       moneyField('cash', 'Tiền mặt đếm trong két lúc chốt (tổng)'),
       moneyField('bank', 'Chuyển khoản đã về (xem app ngân hàng)'),
       cashBox,
       reasonWrap,
       moneyField('tip', 'Tip tiền mặt (để riêng)', true),
-      h('h3', { text: 'ảnh phiếu' }),
+      h('h3', { text: 'Ảnh phiếu' }),
       h('div', { class: 'photos' },
         photoSlot(store, 'phiếu chốt ca iPOS', 'phiếu chốt ca iPOS', { required: true, onChange: update }),
         photoSlot(store, 'phiếu chi', 'phiếu chi (nếu có)', { onChange: update })),
-      h('h3', { text: 'ảnh khu vực' }),
+      h('h3', { text: 'Ảnh khu vực' }),
       h('div', { class: 'photos' }, c.areas.map(a => photoSlot(store, a, a, { required: true, onChange: update }))),
-      h('h3', { text: 'tồn nhanh' + (evening ? ' · ca tối' : '') }), stockWrap,
-      h('h3', { text: 'việc được bàn giao' }),
+      h('h3', { text: 'Tồn nhanh' + (evening ? ' · ca tối' : '') }),
+      h('p', { class: 'hint', text: 'Gõ lượng còn lại của từng món, chọn đơn vị ml hoặc g bên cạnh. Cách đo: nhìn vạch thể tích trên bình / chai đang đựng nguyên liệu (ví dụ chai 1 lít còn khoảng nửa thì ghi 500 ml).' }),
+      stockWrap,
+      evItems.length ? [h('h3', { text: 'Kiểm nguyên liệu ca tối' }),
+        h('p', { class: 'hint', text: 'Chỉ ca tối. Cân hoặc nhìn vạch rồi gõ lượng còn lại của từng loại, chọn ml hoặc g bên cạnh (số lẻ dùng dấu chấm, ví dụ 12.5).' }),
+        evWrap] : null,
+      h('h3', { text: 'Việc được bàn giao' }),
       earlier.map(x => h('div', { class: 'card donecard' },
         x.file ? h('img', { src: URL.createObjectURL(x.file), alt: '' }) : null,
-        h('div', null, h('div', { text: '✓ ' + x.text }),
-          h('div', { class: 'meta', text: `đã báo lúc ${hm(new Date(x.at))}${x.skip ? ' · không làm: ' + x.skip : ' · ảnh tự gửi kèm'}` })))),
+        h('div', null, h('div', { text: x.text }),
+          h('div', { class: 'meta', text: `Đã báo lúc ${hm(new Date(x.at))}${x.skip ? ' · không làm: ' + x.skip : ' · ảnh tự gửi kèm'}` })))),
       tasks.length || !earlier.length ? taskList(tasks, store, update) : null,
-      h('h3', { text: 'việc khác đã làm' }), othersWrap,
-      h('button', { class: 'add', type: 'button', onclick: () => { F.others.push({ text: '' }); drawOthers(); save(); } }, '+ thêm việc khác'),
-      h('h3', { text: 'giao việc cho ca sau' }), handWrap,
-      h('button', { class: 'add', type: 'button', onclick: () => { F.handover.push({ text: '', to: [] }); drawHand(); save(); } }, '+ thêm việc'),
-      h('h3', { text: 'sự cố' }), incident,
-      h('h3', { text: 'ghi chú' }), note,
+      h('h3', { text: 'Việc khác đã làm' }), othersWrap,
+      h('button', { class: 'add', type: 'button', onclick: () => { F.others.push({ text: '' }); drawOthers(); save(); } }, ico('add'), 'Thêm việc khác'),
+      h('h3', { text: 'Giao việc cho ca sau' }), handWrap,
+      h('button', { class: 'add', type: 'button', onclick: () => { F.handover.push({ text: '', to: [] }); drawHand(); save(); } }, ico('add'), 'Thêm việc'),
+      h('h3', { text: 'Sự cố' }), incident,
+      h('h3', { text: 'Ghi chú' }), note,
       missing, submit);
     drawEx(); drawOthers(); drawHand(); update();
   }
@@ -1055,24 +1101,24 @@
           const label = `ảnh ${k * size + 1}–${k * size + g.length}`;
           const b = h('button', { class: 'btn ghost', 'data-label': label }, label);
           b.addEventListener('click', () => {
-            const p = shareFiles(g, b, label + ' ✓');
+            const p = shareFiles(g, b, label + ' · đã mở');
             if ([...batches.querySelectorAll('button')].every(x => x.classList.contains('done'))) markShare('photos');
             p.catch(e => { if (e.name !== 'AbortError') toast('Không gửi được: ' + e.message, true); });
           });
           return b;
         }));
     }
-    const b2Label = `2. gửi ${files.length} ảnh vào Zalo`;
+    const b2Label = `2. Gửi ${files.length} ảnh vào Zalo`;
     const b2 = h('button', { class: 'btn', disabled: !files.length, 'data-label': b2Label }, b2Label);
     b2.addEventListener('click', async () => {
-      try { await shareFiles(files, b2, '2. đã mở chia sẻ ảnh ✓'); }
+      try { await shareFiles(files, b2, '2. Đã mở chia sẻ ảnh'); }
       catch (e) {
         if (e.name === 'AbortError') return;
         toast('Gửi cả loạt không được, thử gửi từng đợt bên dưới.', true);
         showBatches();
       }
     });
-    const b1Label = '1. gửi tin vào Zalo';
+    const b1Label = '1. Gửi tin vào Zalo';
     const b1 = h('button', { class: 'btn', 'data-label': b1Label }, b1Label);
     b1.addEventListener('click', async () => {
       if (!canShare) {
@@ -1081,7 +1127,7 @@
         return;
       }
       const p = navigator.share({ text: r.zaloText });
-      b1.classList.add('done'); b1.textContent = '1. đã mở chia sẻ tin ✓';
+      b1.classList.add('done'); b1.textContent = '1. Đã mở chia sẻ tin';
       markShare('text');
       try { await p; } catch (e) {
         if (e.name === 'AbortError') { b1.classList.remove('done'); b1.textContent = b1Label; }
@@ -1089,7 +1135,7 @@
       }
     });
     render(
-      again ? h('h2', { class: 'title', text: 'gửi lại vào Zalo' }) : h('div', { class: 'big-ok', text: 'đã gửi ✓' }),
+      again ? h('h2', { class: 'title', text: 'Gửi lại vào Zalo' }) : h('div', { class: 'big-ok', text: 'Đã gửi' }),
       h('p', { class: 'sub', text: again
         ? `${again.title} lúc ${hm(new Date(again.at))} đã lưu trên Sheet. Gửi nốt phần còn thiếu vào nhóm á daily report.`
         : 'Báo cáo đã lưu. Giờ gửi vào nhóm á daily report.' }),
@@ -1097,7 +1143,7 @@
       h('pre', { class: 'msg', text: r.zaloText }),
       b1, b2, batches,
       h('p', { class: 'hint', text: 'Gửi tin trước, quay lại app này rồi bấm gửi ảnh. Chọn đúng nhóm ở cả hai bước.' }),
-      h('button', { class: 'btn ghost', onclick: viewHome }, 'xong, về trang chính'));
+      h('button', { class: 'btn ghost', onclick: viewHome }, 'Xong, về trang chính'));
   }
 
   // ---------- duyệt công ----------
@@ -1115,7 +1161,7 @@
   }
 
   async function viewApprovals() {
-    render(back(), h('h2', { class: 'title', text: 'duyệt công' }), spinner('đang tải…'));
+    render(back(), h('h2', { class: 'title', text: 'Duyệt công' }), spinner('Đang tải…'));
     let list;
     try { list = await api('approvals'); } catch (e) { render(back(), h('p', { class: 'alert bad', text: e.message })); return; }
     S.info.pendingApprovals = list.length;
@@ -1134,24 +1180,24 @@
       const pIn = timePick(tIn || (mine ? mine.startHM : ''));
       const pOut = timePick(tOut || (mine && (inM === null || mine.e > inM) ? mine.endHM : ''));
       const preview = h('div', { class: 'hint' });
-      const reason = h('input', { type: 'text', placeholder: 'ví dụ: quên chấm ra, xác nhận qua camera', autocomplete: 'off' });
-      const save = h('button', { class: 'btn' }, 'lưu giờ đã sửa');
+      const reason = h('input', { type: 'text', placeholder: 'Ví dụ: quên chấm ra, xác nhận qua camera', autocomplete: 'off' });
+      const save = h('button', { class: 'btn' }, 'Lưu giờ đã sửa');
       const calc = () => {
         const a = mins(pIn.get()), b = mins(pOut.get());
-        if (a === null || b === null) { preview.className = 'warn'; preview.textContent = 'chọn đủ giờ vào và giờ ra'; save.disabled = true; return; }
+        if (a === null || b === null) { preview.className = 'warn'; preview.textContent = 'Chọn đủ giờ vào và giờ ra'; save.disabled = true; return; }
         const next = b <= a, w = (next ? b + 1440 : b) - a;
         const long = w > 12 * 60;
         preview.className = long ? 'warn' : 'ok';
-        preview.textContent = `→ làm ${dur(w)}${next ? ' (ra hôm sau)' : ''}${long ? ' ⚠ quá 12 giờ, xem lại giờ ra' : ''}`;
+        preview.textContent = `Làm ${dur(w)}${next ? ' (ra hôm sau)' : ''}${long ? ' · quá 12 giờ, xem lại giờ ra' : ''}`;
         save.disabled = false;
       };
       [pIn, pOut].forEach(p => p.addEventListener('change', calc));
       const chips = plan.length ? h('div', { class: 'chips' },
-        h('span', { class: 'hint', text: 'theo lịch:' }),
+        h('span', { class: 'hint', text: 'Theo lịch:' }),
         blk.map(b => h('button', { type: 'button', class: 'chip', onclick: () => {
           if (!pIn.get() || !tIn) pIn.set(b.startHM);
           pOut.set(b.endHM); calc();
-        } }, `${b.codes} ${b.startHM}–${b.endHM}`))) : h('div', { class: 'hint', text: 'không có lịch ca ngày này' });
+        } }, `${b.codes} ${b.startHM}–${b.endHM}`))) : h('div', { class: 'hint', text: 'Không có lịch ca ngày này' });
       save.addEventListener('click', async () => {
         save.disabled = true;
         try { await api('approve', { id: it.id, op: 'edit', inTime: pIn.get(), outTime: pOut.get(), reason: reason.value }); done('đã sửa'); }
@@ -1159,16 +1205,16 @@
       });
       const missingTime = !it.inTime || !it.outTime;
       const form = h('div', { class: 'aform', hidden: !missingTime },
-        h('div', { class: 'trow' }, h('span', { class: 'tl', text: 'giờ vào' }), pIn),
-        h('div', { class: 'trow' }, h('span', { class: 'tl', text: 'giờ ra' }), pOut),
+        h('div', { class: 'trow' }, h('span', { class: 'tl', text: 'Giờ vào' }), pIn),
+        h('div', { class: 'trow' }, h('span', { class: 'tl', text: 'Giờ ra' }), pOut),
         chips, preview,
-        h('label', { class: 'f', text: 'lý do sửa (bắt buộc)' }), reason,
+        h('label', { class: 'f', text: 'Lý do sửa (bắt buộc)' }), reason,
         save);
       calc();
-      const done = st => { el.replaceChildren(h('div', { class: 'hint ok', text: `${it.name} · ${it.date}: ${st} ✓` })); S.info.pendingApprovals--; };
+      const done = st => { el.replaceChildren(h('div', { class: 'hint ok', text: `${it.name} · ${it.date}: ${st}` })); S.info.pendingApprovals--; };
       el.append(
         h('div', null, h('strong', { text: it.name }), ` · ${it.date} · ca ${it.shift || '—'}`),
-        h('div', { class: 'meta', text: `chấm vào ${tIn || '—'} · chấm ra ${tOut || '—'}${plan.length ? ' · lịch ' + plan.map(b => b.codes + ' ' + b.startHM + '–' + b.endHM).join(', ') : ''}` }),
+        h('div', { class: 'meta', text: `Chấm vào ${tIn || '—'} · chấm ra ${tOut || '—'}${plan.length ? ' · lịch ' + plan.map(b => b.codes + ' ' + b.startHM + '–' + b.endHM).join(', ') : ''}` }),
         h('div', { class: 'todo', text: it.flags }),
         h('div', { class: 'selfies' }, img(it.selfieIn, 'selfie vào'), img(it.selfieOut, 'selfie ra')),
         missingTime ? h('p', { class: 'hint', text: 'Thiếu giờ chấm, chọn giờ thực tế rồi lưu.' }) : h('div', { class: 'row' },
@@ -1176,18 +1222,18 @@
             ev.target.disabled = true;
             try { await api('approve', { id: it.id, op: 'approve' }); done('đã duyệt'); }
             catch (e) { toast(e.message, true); ev.target.disabled = false; }
-          } }, 'duyệt'),
-          h('button', { class: 'btn ghost', style: 'margin:4px 0', onclick: () => { form.hidden = !form.hidden; } }, 'sửa giờ')),
+          } }, 'Duyệt'),
+          h('button', { class: 'btn ghost', style: 'margin:4px 0', onclick: () => { form.hidden = !form.hidden; } }, 'Sửa giờ')),
         form);
       return el;
     };
-    render(back(), h('h2', { class: 'title', text: 'duyệt công' }),
+    render(back(), h('h2', { class: 'title', text: 'Duyệt công' }),
       h('p', { class: 'sub', text: list.length ? `${list.length} lượt cần xem. Lượt bình thường đã tự duyệt.` : 'Không có lượt nào cần duyệt.' }),
       list.map(card));
   }
 
   // ---------- khởi động ----------
-  if (MOCK) document.body.append(h('div', { class: 'demo', text: 'bản xem thử · dữ liệu giả' }));
+  if (MOCK) document.body.append(h('div', { class: 'demo', text: 'Bản xem thử · dữ liệu giả' }));
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
