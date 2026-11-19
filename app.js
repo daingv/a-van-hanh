@@ -262,6 +262,7 @@
   const spinner = txt => h('p', { class: 'sub' }, h('span', { class: 'spin' }), txt);
 
   function logout() {
+    memo.clear();
     S.name = S.pin = S.info = null;
     clearTimeout(idleTimer);
     viewLogin();
@@ -280,6 +281,23 @@
     get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* bỏ qua */ } }
   };
+  // Dữ liệu tải lần trước (trong ngày, theo từng người): hiện ngay, tải bản mới ở nền rồi thay vào.
+  const memo = {
+    key: k => 'c:' + S.name + ':' + k,
+    get(k, maxAgeMs) {
+      const c = store.get(memo.key(k));
+      return c && Date.now() - c.at < maxAgeMs && new Date(c.at).toDateString() === new Date().toDateString() ? c.v : null;
+    },
+    set(k, v) { store.set(memo.key(k), { at: Date.now(), v }); },
+    clear() { try { Object.keys(localStorage).filter(k => k.startsWith('c:')).forEach(k => localStorage.removeItem(k)); } catch (e) { /* bỏ qua */ } }
+  };
+  const inflight = {};
+  // cùng một yêu cầu đang chạy thì dùng chung, không gọi máy chủ lần hai
+  function fresh(action, payload, k) {
+    if (!inflight[k]) inflight[k] = api(action, payload).then(v => { memo.set(k, v); return v; }).finally(() => { delete inflight[k]; });
+    return inflight[k];
+  }
+  const prefetchWeek = () => { if (!memo.get('week0', 10 * 60e3) && !inflight.week0) fresh('week', { week: 0 }, 'week0').catch(() => {}); };
   let loginToken = 0;
   // màn chào: lời chào theo giờ + 1 câu động lực (tab CaiDat cột S:T) + nút Đăng nhập. Không hiện tên nhân viên.
   const QUOTE_FALLBACK = [{ text: 'Ichi-go ichi-e: mỗi lần gặp gỡ chỉ có một lần. Hãy pha từng ly như thể đó là ly duy nhất khách được uống.', by: 'Trà đạo Nhật Bản' }];
@@ -302,15 +320,22 @@
     const pick = pool[Math.floor(Math.random() * pool.length)];
     const quoteText = h('p', { class: 'q-text', text: pick.text });
     const quoteBy = h('p', { class: 'q-by', text: pick.by || '', hidden: !pick.by });
-    render(h('div', { class: 'welcome' },
-      h('div', { class: 'w-mark', text: '(á)' }),
+    const bgSaved = store.get('a-bg');
+    const bgEl = h('div', { class: 'w-bg', 'aria-hidden': 'true' });
+    const setBg = src => { bgEl.style.backgroundImage = 'url("' + String(src).replace(/"/g, '%22') + '")'; };
+    setBg(bgSaved && bgSaved.data ? bgSaved.data : 'bg-welcome.webp');
+    render(h('div', { class: 'welcome has-bg' }, bgEl, h('div', { class: 'w-shade', 'aria-hidden': 'true' }),
+      h('div', { class: 'w-mark', role: 'img', 'aria-label': '(á)' }),
       h('div', { class: 'w-mid' },
         h('h2', { class: 'title', text: greeting() }),
         h('p', { class: 'w-sub', text: 'Đội hình bạn pha trà' }),
         h('blockquote', { class: 'quote' }, quoteText, quoteBy)),
       h('button', { class: 'btn', onclick: () => viewPin() }, 'Đăng nhập')));
     // cập nhật câu mới từ Sheet cho lần mở sau; chưa có câu nào trên máy thì thay luôn
-    api('welcome', {}, false).then(d => {
+    api('welcome', { have: bgSaved && bgSaved.ver || '' }, false).then(d => {
+      // ảnh nền: null = ảnh mặc định; { ver } = máy đã có; { ver, data } = ảnh mới từ Sheet
+      if (!(d && d.bg)) { if (bgSaved) { try { localStorage.removeItem('a-bg'); } catch (e) { /* bỏ qua */ } if (token === loginToken) setBg('bg-welcome.webp'); } }
+      else if (d.bg.data) { store.set('a-bg', d.bg); if (token === loginToken) setBg(d.bg.data); }
       const qs = (d && d.quotes || []).filter(q => q && q.text);
       store.set('a-quotes', qs);
       if (token === loginToken && !(cached && cached.length) && qs.length) {
@@ -352,7 +377,9 @@
       try {
         const who = await api('pinLogin', { pin, dev: deviceId() }, false);
         S.name = who.name; S.pin = pin;
-        await refreshInfo();
+        if (who.info) { S.info = who.info; S.offset = who.info.serverNow - Date.now(); } // máy chủ mới: có sẵn dữ liệu
+        if (S.info && who.summary) { S.info.summary = who.summary; S.info.summaryAt = Date.now(); memo.set('summary', who.summary); }
+        else await refreshInfo();
         document.removeEventListener('keydown', onKey);
         bumpIdle();
         viewHome('fwd');
@@ -413,10 +440,39 @@
   const chev = () => h('span', { class: 'chev', 'aria-hidden': 'true' });
 
   // trang chủ 3 cấp: ca hôm nay (khối đen) → việc trong ca (thẻ trắng, việc kế tiếp nổi lên) → ca tới / tháng / cả quán (nhẹ)
+  // ---------- thông báo chung (chủ quán viết trong tab CaiDat) ----------
+  const noticeKey = n => n.title + '|' + (n.date || '') + '|' + (n.body || '').length;
+  const ddmm = ts => { const d = new Date(ts); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`; };
+  function noticesBox(list) {
+    if (!list || !list.length) return '';
+    const seen = store.get('a-seen') || [];
+    return [h('div', { class: 'sec sec-top' }, h('span', { text: 'Thông báo' })),
+      h('div', { class: 'card' }, h('ul', { class: 'notices' }, list.map((n, k) => h('li', null,
+        h('button', { type: 'button', class: 'row', onclick: () => viewNotice(n, k) },
+          seen.includes(noticeKey(n)) ? h('span', { class: 'nd' }) : h('span', { class: 'nd on', 'aria-label': 'Chưa đọc' }),
+          h('span', { class: 'txt' }, h('span', { class: 'nt', text: n.title }), n.date ? h('small', { text: ddmm(n.date) }) : ''),
+          chev())))))];
+  }
+  async function viewNotice(n, k) {
+    const key = noticeKey(n);
+    store.set('a-seen', (store.get('a-seen') || []).filter(x => x !== key).concat(key).slice(-60));
+    const img = h('div', { class: 'n-img' });
+    render(back(), n.date ? h('p', { class: 'date', text: ddmm(n.date) }) : '', h('h2', { class: 'title', text: n.title }),
+      n.body ? h('div', { class: 'n-body', text: n.body }) : '', img);
+    if (!n.img) return;
+    img.replaceChildren(spinner('Đang tải ảnh…'));
+    try {
+      const d = await api('noticeImg', { i: k, t: n.title });
+      if (img.isConnected) img.replaceChildren(h('img', { src: d.data, alt: 'Ảnh kèm thông báo' }));
+    } catch (e) {
+      if (img.isConnected) img.replaceChildren(h('p', { class: 'alert bad', text: e.message }));
+    }
+  }
+
   function summaryPanel(sm) {
     if (!sm) return h('div', { class: 'summary' }, h('div', { class: 'hero' }, h('div', { class: 'lab' }, h('span', { class: 'spin' }), 'Đang tải ca hôm nay…')));
     const t = sm.today, b = t.block, mo = sm.month;
-    const parts = [];
+    const parts = [...[].concat(noticesBox(sm.notices))].filter(Boolean);
     const sec = (title, right) => h('div', { class: 'sec' }, h('span', { text: title }), right ? h('small', { text: right }) : '');
 
     // cấp 1 · ca hôm nay
@@ -427,8 +483,9 @@
     else if (b && b.start > now().getTime()) stat = st('idle', cap(countdown(b.start)) + ' tới giờ ca');
     else if (t.workedMin) stat = st('idle', `Đã làm hôm nay: ${dur(t.workedMin)}`);
     parts.push(h('div', { class: 'hero' },
-      h('div', { class: 'lab' }, h('span', { text: 'Ca hôm nay' }), b ? h('span', { text: b.codes }) : ''),
+      h('div', { class: 'lab' }, h('span', { text: 'Ca hôm nay' }), S.info && S.info.role ? h('span', { class: 'role', text: cap(S.info.role) }) : ''),
       h('div', { class: 'time', text: b ? `${b.startHM} – ${b.endHM}` : 'Bạn nghỉ' }),
+      b && b.keeper ? h('div', { class: 'keeper', text: 'Bạn là người giữ ca hôm nay' }) : '',
       stat,
       t.mates.length ? h('div', { class: 'mates' }, 'Đang trong ca: ', h('b', { text: t.mates.map(firstName).join(', ') })) : ''));
 
@@ -459,33 +516,21 @@
       const n = sm.next;
       parts.push(sec('Ca tiếp theo'), h('div', { class: 'card' },
         h('button', { type: 'button', class: 'row', onclick: () => viewWeek(0) },
-          h('span', { class: 'txt' }, h('span', null, `${cap(dayLabel(n.start))} · ${n.codes} `, h('b', { class: 'num', text: `${n.startHM}–${n.endHM}` })), h('small', null, em(cap(countdown(n.start))))),
+          h('span', { class: 'txt' }, h('span', null, `${cap(dayLabel(n.start))} `, h('b', { class: 'num', text: `${n.startHM}–${n.endHM}` })), h('small', null, em(cap(countdown(n.start)) + (n.keeper ? ' · bạn giữ ca' : '')))),
           chev())));
     }
 
     // cấp 3 · tháng: lưới số, chỉ số xấu mới đỏ cam
-    const cell = (n, l, bad) => h('div', null, h('div', { class: 'n' + (bad ? ' warn' : ''), text: n }), h('div', { class: 'l', text: l }));
+    const cell = (n, l, bad) => h('div', null, h('div', { class: 'l', text: l }), h('div', { class: 'n' + (bad ? ' warn' : ''), text: n }));
     parts.push(sec(cap(mo.recap ? `tổng kết ${mo.label}` : mo.label)), h('div', { class: 'card' }, h('div', { class: 'grid' },
       cell(`${mo.days} buổi`, 'Số buổi'),
       cell(dur(mo.minutes), 'Giờ công'),
-      cell(mo.late ? `${mo.late} lần · ${mo.lateMin}′` : 'Không', 'Đi muộn', mo.late),
-      cell(mo.early ? `${mo.early} lần · ${mo.earlyMin}′` : 'Không', 'Về sớm', mo.early),
+      cell(mo.late ? `${mo.late} lần · ${mo.lateMin} phút` : 'Không', 'Đi muộn', mo.late),
+      cell(mo.early ? `${mo.early} lần · ${mo.earlyMin} phút` : 'Không', 'Về sớm', mo.early),
       cell(mo.forgot ? `${mo.forgot} lần` : 'Không', 'Quên chấm ra', mo.forgot),
-      mo.nightMinutes ? cell(dur(mo.nightMinutes), 'Sau 23h') : '',
+      mo.nightMinutes ? cell(dur(mo.nightMinutes), 'Làm sau 23:00') : '',
       mo.pending ? cell(String(mo.pending), 'Đang chờ duyệt', true) : '')));
 
-    // cả quán hôm nay (head-barista / chủ quán)
-    if (sm.team) {
-      const tm = sm.team, lc = tm.lastClosing;
-      const lech = (label, d, u) => `${label} ${diffText(d)}` +
-        (!d ? '' : !u ? ' (đã giải trình)' : u === d ? ' (chưa giải trình)' : ` (còn ${diffText(u)} chưa giải trình)`);
-      const flag = (k, v, bad) => h('div', { class: 'flag' }, h('span', { class: 'k', text: k }), h('span', { class: 'v ' + (bad ? 'warn' : 'ok'), text: v }));
-      parts.push(sec('Cả quán hôm nay'), h('div', { class: 'card' },
-        flag('Báo cáo đầu ca', tm.openingDone ? 'Đã có' : 'Chưa có', !tm.openingDone),
-        flag('Tới giờ chưa chấm vào', tm.notIn.length ? tm.notIn.map(x => `${firstName(x.name)} (${x.start})`).join(', ') : 'Không', tm.notIn.length),
-        h('div', { class: 'note' }, em('Chốt ca gần nhất: ' + (!lc ? 'chưa có' :
-          `ca ${lc.shift} ${dayLabel(lc.at)} ${hm(new Date(lc.at))} · ${firstName(lc.by)} · ` + lech('két', lc.diffCash, lc.uCash) + ' · ' + lech('CK', lc.diffBank, lc.uBank))))));
-    }
     return h('div', { class: 'summary' }, ...parts);
   }
 
@@ -497,6 +542,7 @@
     const openWindow = m >= hmToMin(c.openFrom) && m <= hmToMin(c.openTo);
     const item = (label, fn, extra) => h('li', null, h('button', { onclick: fn }, h('span', { class: 'ml' }, label), extra));
     const soon = h('span', { class: 'soon', text: 'Sắp có' });
+    if (!i.summary) i.summary = memo.get('summary', 12 * 3600e3);
     const panel = h('div', null, summaryPanel(i.summary));
     const resend = h('div');
     const resendItem = h('li', { hidden: true });
@@ -513,9 +559,11 @@
       resendItem.replaceChildren(h('button', { onclick: open }, 'Gửi lại báo cáo gần nhất vào Zalo'));
     });
     // lấy số mới nhất mỗi lần về trang chủ (sau khi chấm công, gửi báo cáo…), không chặn màn hình
-    api('summary').then(sm => {
-      i.summary = sm;
+    if (i.summaryAt && Date.now() - i.summaryAt < 20000) setTimeout(prefetchWeek, 300);
+    else fresh('summary', {}, 'summary').then(sm => {
+      i.summary = sm; i.summaryAt = Date.now();
       if (panel.isConnected) panel.replaceChildren(summaryPanel(sm));
+      prefetchWeek();
     }).catch(() => {});
     render(
       h('div', { class: 'greet' }, h('p', { class: 'date', text: `${WD[now().getDay()]}, ${pad(now().getDate())}/${pad(now().getMonth() + 1)}` }),
@@ -547,12 +595,18 @@
       h('button', { type: 'button', class: k === week ? 'on' : '', onclick: () => k !== week && viewWeek(k) }, t)));
     const body = h('div', null, spinner('Đang tải lịch…'));
     render(back(), h('h2', { class: 'title', text: 'Lịch tuần' }), seg, h('div', { style: 'height:14px' }), body);
-    let data;
-    try { data = await api('week', { week }); } catch (e) {
+    const k = 'week' + week, had = memo.get(k, 12 * 3600e3);
+    let first = true;
+    const draw = data => { if (body.isConnected) { drawWeek(data, first); first = false; } };
+    if (had) draw(had);
+    fresh('week', { week }, k).then(d => {
+      if (!had || JSON.stringify(d) !== JSON.stringify(had)) draw(d);
+      if (week === 0 && !memo.get('week1', 10 * 60e3)) fresh('week', { week: 1 }, 'week1').catch(() => {});
+    }).catch(e => {
+      if (had || !body.isConnected) return;
       body.replaceChildren(h('p', { class: 'alert bad', text: e.message }), h('button', { class: 'btn', onclick: () => viewWeek(week) }, 'Thử lại'));
-      return;
-    }
-    if (!body.isConnected) return;
+    });
+    function drawWeek(data, first) {
     const today = day0(now());
     // giờ dạng 8h, 16h30
     const hh = min => Math.floor(min / 60) + 'h' + (min % 60 ? pad(min % 60) : '');
@@ -600,8 +654,9 @@
       if (isToday) todayCard = card;
       return card;
     });
-    body.replaceChildren(h('div', { class: 'summary' }, cards));
-    if (todayCard && todayCard !== cards[0]) todayCard.scrollIntoView({ block: 'start' });
+    body.replaceChildren(h('div', { class: 'summary days' }, cards));
+    if (first && todayCard && todayCard !== cards[0]) todayCard.scrollIntoView({ block: 'start' });
+    }
   }
 
   function viewSoon(title) {
@@ -1269,7 +1324,7 @@
         blk.map(b => h('button', { type: 'button', class: 'chip', onclick: () => {
           if (!pIn.get() || !tIn) pIn.set(b.startHM);
           pOut.set(b.endHM); calc();
-        } }, `${b.codes} ${b.startHM}–${b.endHM}`))) : h('div', { class: 'hint', text: 'Không có lịch ca ngày này' });
+        } }, `${b.startHM}–${b.endHM}`))) : h('div', { class: 'hint', text: 'Không có lịch ca ngày này' });
       save.addEventListener('click', async () => {
         save.disabled = true;
         try { await api('approve', { id: it.id, op: 'edit', inTime: pIn.get(), outTime: pOut.get(), reason: reason.value }); done('đã sửa'); }
@@ -1286,7 +1341,7 @@
       const done = st => { el.replaceChildren(h('div', { class: 'hint ok', text: `${it.name} · ${it.date}: ${st}` })); S.info.pendingApprovals--; };
       el.append(
         h('div', null, h('strong', { text: it.name }), ` · ${it.date} · ca ${it.shift || '—'}`),
-        h('div', { class: 'meta' }, em(`Chấm vào ${tIn || '—'} · chấm ra ${tOut || '—'}${plan.length ? ' · lịch ' + plan.map(b => b.codes + ' ' + b.startHM + '–' + b.endHM).join(', ') : ''}`)),
+        h('div', { class: 'meta' }, em(`Chấm vào ${tIn || '—'} · chấm ra ${tOut || '—'}${plan.length ? ' · lịch ' + plan.map(b => b.startHM + '–' + b.endHM).join(', ') : ''}`)),
         h('div', { class: 'todo', text: it.flags }),
         h('div', { class: 'selfies' }, img(it.selfieIn, 'selfie vào'), img(it.selfieOut, 'selfie ra')),
         missingTime ? h('p', { class: 'hint', text: 'Thiếu giờ chấm, chọn giờ thực tế rồi lưu.' }) : h('div', { class: 'row' },
