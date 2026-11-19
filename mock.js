@@ -12,7 +12,10 @@
   let open = {};
   let tasks = [{ id: 't1', text: 'nấu 2 nồi trân châu', from: 'Hoàng Ngọc Tú', at: Date.now() - 3 * 3600e3, to: ['Nguyễn Trâm Anh', 'Đoàn Hạnh Nguyên'] },
     { id: 't2', text: 'lau tủ mát', from: 'Hoàng Ngọc Tú', at: Date.now() - 3 * 3600e3, to: [] }];
-  let approvals = [{ id: 'c1', date: '2026-11-17', name: 'Hoàng Ngọc Tú', shift: 'C', inTime: Date.now() - 26 * 3600e3,
+  const at0 = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.getTime(); };
+  let approvals = [{ id: 'c0', date: new Date().toISOString().slice(0,10), name: 'Nguyễn Trâm Anh', shift: 'FT1', inTime: at0(8, 22), outTime: null, flags: 'đi trễ 22 phút', stage: 'in', selfieIn: null, selfieOut: null, plan: [{ startHM: '08:00', endHM: '16:00', codes: 'FT1' }] },
+    { id: 'c2', date: '2026-11-18', name: 'Đoàn Hạnh Nguyên', shift: 'C', inTime: at0(16, 25) - 864e5, outTime: at0(18, 2) - 864e5, flags: 'đi trễ 205 phút; không có vị trí', stage: 'full', selfieIn: null, selfieOut: null, plan: [{ startHM: '13:00', endHM: '18:00', codes: 'C' }] },
+    { id: 'c1', date: '2026-11-17', name: 'Hoàng Ngọc Tú', shift: 'C', inTime: Date.now() - 26 * 3600e3,
     outTime: null, flags: 'không có vị trí; quên chấm ra', selfieIn: null, selfieOut: null,
     plan: [{ startHM: '13:00', endHM: '18:00', codes: 'C' }] }];
   let doneTasks = [];
@@ -123,6 +126,7 @@
         return ok({ notices: NOTICES });
       case 'approve':
         approvals = approvals.filter(a => a.id !== b.id);
+        if (b.op === 'edit' && !b.outTime) return ok({ status: 'đã duyệt vào' });
         return ok({ status: b.op === 'edit' ? 'đã sửa' : 'đã duyệt' });
     }
     return err('Yêu cầu không hợp lệ');
