@@ -320,6 +320,30 @@
   const alive = el => el.isConnected || !!(pendingView && pendingView.contains(el));
   // chạy fn khi phần tử đã thật sự lên màn hình (dùng cho cuộn tới hôm nay…)
   const whenShown = (el, fn, tries = 60) => { if (el.isConnected) setTimeout(fn, 0); else if (tries > 0 && alive(el)) setTimeout(() => whenShown(el, fn, tries - 1), 50); };
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  const LIGHT_TOP = '#f5f5f7';
+  let welcomeTop = '#151312'; // mép trên ảnh nền mặc định sau lớp phủ tối
+  const setTheme = c => { if (metaTheme && metaTheme.content !== c) metaTheme.content = c; };
+  const syncTheme = () => setTheme($app.querySelector('.welcome.has-bg') ? welcomeTop : LIGHT_TOP);
+  // màu trung bình dải trên cùng của ảnh (đã phủ tối 22% như CSS) để thanh trạng thái liền với ảnh
+  function topColorOf(src) {
+    return new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        try {
+          const W = 120, H = 260, c = document.createElement('canvas'); c.width = W; c.height = H;
+          const g = c.getContext('2d'), k = Math.max(W / im.width, H / im.height), w = im.width * k, hh = im.height * k;
+          g.drawImage(im, (W - w) / 2, (H - hh) * 0.38, w, hh);
+          const d = g.getImageData(0, 0, W, 10).data; let r = 0, gg = 0, b = 0, n = 0;
+          for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; n++; }
+          const hx = v => Math.round(v / n * 0.78).toString(16).padStart(2, '0');
+          res('#' + hx(r) + hx(gg) + hx(b));
+        } catch (e) { res(null); }
+      };
+      im.onerror = () => res(null);
+      im.src = src;
+    });
+  }
   const scrollMemo = {};
   let gestureNav = false;
   function render(...nodes) {
@@ -333,7 +357,7 @@
     if (had && before && dir !== 'same') scrollMemo[before] = window.scrollY;
     // về trang trước: cuộn đúng chỗ đã xem; sang trang mới: lên đầu; vẽ lại cùng trang: giữ nguyên
     const y = dir === 'back' && scrollMemo[after] != null ? scrollMemo[after] : dir === 'same' ? window.scrollY : 0;
-    const swap = () => { $app.replaceChildren(...probe.childNodes); window.scrollTo(0, y); };
+    const swap = () => { $app.replaceChildren(...probe.childNodes); window.scrollTo(0, y); syncTheme(); };
     if (dir === 'none') return swap();
     if (gestureNav) { gestureNav = false; return swap(); } // vuốt về: hoạt ảnh do cử chỉ lo
     const reduced = reduceMotion && reduceMotion.matches;
@@ -432,9 +456,13 @@
     const quoteBy = h('p', { class: 'q-by', text: pick.by || '', hidden: !pick.by });
     const bgSaved = store.get('a-bg');
     const bgEl = h('div', { class: 'w-bg', 'aria-hidden': 'true' });
-    const setBg = src => { bgEl.style.backgroundImage = 'url("' + String(src).replace(/"/g, '%22') + '")'; };
+    const setBg = src => {
+      bgEl.style.backgroundImage = 'url("' + String(src).replace(/"/g, '%22') + '")';
+      topColorOf(src).then(c => { if (c) { welcomeTop = c; syncTheme(); } });
+    };
+    const firstOpen = !$app.childElementCount; // vừa mở app (không phải bấm Quay lại từ màn PIN)
     setBg(bgSaved && bgSaved.data ? bgSaved.data : 'bg-welcome.webp');
-    render(h('div', { class: 'welcome has-bg' }, bgEl, h('div', { class: 'w-shade', 'aria-hidden': 'true' }),
+    render(h('div', { class: 'welcome has-bg' + (firstOpen ? ' intro' : '') }, bgEl, h('div', { class: 'w-shade', 'aria-hidden': 'true' }),
       h('div', { class: 'w-mark', role: 'img', 'aria-label': '(á)' }),
       h('div', { class: 'w-mid' },
         h('h2', { class: 'title', text: greeting() }),

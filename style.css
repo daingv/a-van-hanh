@@ -487,3 +487,24 @@ b.num.ok { color: var(--ok); }
 /* vuốt về: trang hiện tại trượt theo ngón tay, có bóng mép trái, phía sau tối nhẹ */
 html.swiping body { background: #e8e8ed; }
 html.swiping #app { background: var(--bg); box-shadow: -10px 0 28px rgba(0,0,0,.10); will-change: transform; min-height: 100vh; }
+
+/* mở app: ảnh nền hiện dần và thu nhẹ về khung, rồi logo, lời chào, câu trích, nút lần lượt nổi lên */
+@keyframes w-photo { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
+@keyframes w-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes w-fade { from { opacity: 0; } to { opacity: 1; } }
+.welcome.intro .w-bg { animation: w-photo 1.4s cubic-bezier(.22,.8,.2,1) both; }
+.welcome.intro .w-shade { animation: w-fade .9s ease-out both; }
+.welcome.intro .w-mark,
+.welcome.intro .w-mid h2.title,
+.welcome.intro .w-sub,
+.welcome.intro .quote,
+.welcome.intro > .btn { animation: w-rise .8s cubic-bezier(.22,.8,.2,1) both; }
+.welcome.intro .w-mark { animation-delay: .25s; }
+.welcome.intro .w-mid h2.title { animation-delay: .45s; }
+.welcome.intro .w-sub { animation-delay: .55s; }
+.welcome.intro .quote { animation-delay: .7s; }
+.welcome.intro > .btn { animation-delay: .9s; }
+@media (prefers-reduced-motion: reduce) {
+  .welcome.intro .w-bg, .welcome.intro .w-mark, .welcome.intro .w-mid h2.title, .welcome.intro .w-sub,
+  .welcome.intro .quote, .welcome.intro > .btn { animation-name: w-fade; animation-duration: .4s; }
+}
