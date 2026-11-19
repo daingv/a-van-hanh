@@ -939,6 +939,7 @@
       cell(dur(mo.minutes), 'Giờ công'),
       cell(mo.late ? `${mo.late} lần · ${mo.lateMin} phút` : 'Không', 'Đi muộn', mo.late),
       cell(mo.early ? `${mo.early} lần · ${mo.earlyMin} phút` : 'Không', 'Về sớm', mo.early),
+      mo.over ? cell(`${mo.over} lần · ${mo.overMin} phút`, 'Về muộn', true) : '',
       cell(mo.forgot ? `${mo.forgot} lần` : 'Không', 'Quên chấm ra', mo.forgot),
       mo.nightMinutes ? cell(dur(mo.nightMinutes), 'Làm sau 23:00') : '',
       mo.pending ? cell(String(mo.pending), 'Đang chờ duyệt', true) : '')));
@@ -1897,7 +1898,7 @@
       [pIn, pOut].forEach(p => p.addEventListener('change', calc));
       [pIn, pOut].forEach(p => p.addEventListener('input', calc));
       reason.addEventListener('input', () => { drawReasons(); calc(); });
-      const REASONS = onlyIn ? ['Xác nhận qua camera', 'Lỗi app', 'Đến đúng giờ, chấm muộn'] : ['Quên chấm ra', 'Xác nhận qua camera', 'Lỗi app'];
+      const REASONS = onlyIn ? ['Xác nhận qua camera', 'Lỗi app', 'Đến đúng giờ, chấm muộn'] : ['Quên chấm ra', 'Về đúng giờ, chấm muộn', 'Ở lại theo yêu cầu', 'Xác nhận qua camera', 'Lỗi app'];
       const reasonChips = h('div', { class: 'chips' });
       const drawReasons = () => reasonChips.replaceChildren(...REASONS.map(r => h('button', { type: 'button', class: 'chip sm' + (reason.value === r ? ' on' : ''),
         onclick: () => { reason.value = r; drawReasons(); calc(); } }, r)));
@@ -1944,7 +1945,7 @@
         const note = h('div', { class: 'adone' }, h('span', { class: 'tick' }, ico('check')), h('span', { text: `${it.name} · ${dayLabel(it.date)}: ${st}` }));
         swapIn(el, note);
         if (review) setTimeout(() => { if (alive(note)) loadDoneList(); }, 1100);
-        else { S.info.pendingApprovals--; setTimeout(() => { if (alive(note)) collapseAway(note); }, 1600); }
+        else { S.info.pendingApprovals--; setTimeout(() => { if (alive(note)) { collapseAway(note); loadDoneList(); } }, 1600); }
       };
 
       // ảnh + giờ: chỉ hiện phần đang cần duyệt; ảnh tải sau nên hiện khung chờ
@@ -1962,6 +1963,7 @@
         return pt;
       };
       const flags = String(it.flags || '').split(';').map(x => x.trim()).filter(Boolean);
+      const onTime = (it.inTime || it.outTime) && plan.length && !flags.some(f => /^(đi trễ|về sớm|về muộn|chấm khi không có ca|chấm ra không có lượt vào)/.test(f));
       const sched = plan.length ? plan.map(b => b.startHM + '–' + b.endHM).join(', ') : 'không có lịch';
       const sIn = shot(it.selfieIn, 'Vào', tIn, it.inOk && !onlyIn && !review);
       const sOut = onlyIn ? null : shot(it.selfieOut, 'Ra', tOut);
@@ -1974,7 +1976,8 @@
             h('span', { class: 'asub', text: `${dayLabel(it.date)} · ca ${it.shift || '—'} · ${sched}` })),
           onClose ? h('button', { type: 'button', class: 'aclose', 'aria-label': 'thu gọn', onclick: onClose }, ico('close')) : null),
         review ? h('p', { class: 'hint', text: `${ST[it.status] || it.status}${it.by ? ' bởi ' + firstName(it.by) : ''}${it.reason ? ' · ' + it.reason : ''}` }) : null,
-        flags.length ? h('div', { class: 'aflags' }, flags.map(t => h('span', { class: 'aflag', text: flagText(t) }))) : null,
+        flags.length || onTime ? h('div', { class: 'aflags' }, onTime ? h('span', { class: 'aflag ok', text: 'Đúng giờ' }) : null,
+          flags.map(t => h('span', { class: 'aflag', text: flagText(t) }))) : null,
         h('div', { class: 'ptimes' + (onlyIn ? ' one' : '') }, sIn, sOut),
         onlyIn ? h('p', { class: 'hint', text: 'Đang trong ca · giờ ra duyệt sau khi chấm ra' }) : null,
         missingTime ? h('p', { class: 'hint', text: 'Thiếu giờ chấm: nhập giờ thực tế rồi lưu.' }) : act,
@@ -1984,12 +1987,17 @@
 
     // đã duyệt gần đây: bấm vào một dòng là mở thẻ ngay tại chỗ để xem lại / sửa nhanh
     const doneWrap = h('div');
+    // dòng đã duyệt: cờ giờ giấc nếu còn, không thì "đúng giờ"
+    const doneTag = d => {
+      const t = String(d.flags || '').split('; ').find(f => /^(đi trễ|về sớm|về muộn)/.test(f));
+      return t ? flagText(t) : 'Đúng giờ';
+    };
     const doneRow = d => {
       const tIn = d.inTime ? hm(new Date(d.inTime)) : '—', tOut = d.outTime ? hm(new Date(d.outTime)) : '—';
       const li = h('li', { class: 'drow' });
       const row = h('button', { type: 'button', class: 'dbtn', 'aria-expanded': 'false' },
         h('div', null, h('strong', { text: d.name }), h('span', { class: 'asub', text: `${dayLabel(d.date)} · ${tIn}–${tOut}` }),
-          h('span', { class: 'asub', text: `${ST[d.status] || d.status}${d.by ? ' · ' + firstName(d.by) : ''}${d.flags ? ' · ' + flagText(d.flags.split('; ')[0]) : ''}` })),
+          h('span', { class: 'asub', text: `${ST[d.status] || d.status}${d.by ? ' · ' + firstName(d.by) : ''}${' · ' + doneTag(d)}` })),
         h('span', { class: 'dchev' }, ico('next')));
       let open = null;
       const close = () => { if (!open) return; const o = open; open = null; li.classList.remove('open'); row.setAttribute('aria-expanded', 'false'); conceal(o, () => o.remove()); reveal(row); };

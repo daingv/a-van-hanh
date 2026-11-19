@@ -140,7 +140,7 @@
           if (y) { // vòng 2
             if (b.op === 'edit') { y.status = 'đã sửa'; y.reason = (y.reason ? y.reason + ' → ' : '') + b.reason; y.inTime = new Date(new Date(y.inTime).toDateString() + ' ' + b.inTime).getTime(); if (b.outTime) y.outTime = new Date(new Date(y.outTime).toDateString() + ' ' + b.outTime).getTime(); y.flags = ''; }
             y.by = b.name; return ok({ status: y.status }); } }
-        { const x = approvals.find(a => a.id === b.id); if (x) approvedDone.unshift({ ...x, status: b.op === 'edit' ? 'đã sửa' : 'đã duyệt', by: b.name, reason: b.reason || '' }); }
+        { const x = approvals.find(a => a.id === b.id); if (x) approvedDone.unshift({ ...x, status: b.op === 'edit' ? 'đã sửa' : 'đã duyệt', by: b.name, reason: b.reason || '', flags: b.op === 'edit' ? String(x.flags || '').split('; ').filter(f => !/^(đi trễ|về sớm)/.test(f)).join('; ') : x.flags, plan: x.plan && x.plan.length ? x.plan : [{ startHM: '13:00', endHM: '18:00', codes: 'C' }] }); }
         approvals = approvals.filter(a => a.id !== b.id);
         if (b.op === 'edit' && !b.outTime) return ok({ status: 'đã duyệt vào' });
         return ok({ status: b.op === 'edit' ? 'đã sửa' : 'đã duyệt' });
