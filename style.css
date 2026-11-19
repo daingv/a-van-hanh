@@ -473,7 +473,7 @@ b.num.ok { color: var(--ok); }
   -webkit-mask: url(logo-mark.png) left center / contain no-repeat; mask: url(logo-mark.png) left center / contain no-repeat; }
 
 /* lịch tuần: các ngày cách nhau rõ ràng */
-.summary.days { display: grid; gap: 12px; }
+.weekdays { display: grid; gap: 12px; margin: 0 0 32px; }
 
 /* thông báo: chữ sát lề trái như các hộp khác; chưa đọc = nhãn "Mới" bên phải */
 .summary .notices li + li::before { left: 16px; }

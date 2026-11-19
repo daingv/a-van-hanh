@@ -702,7 +702,7 @@
       if (isToday) todayCard = card;
       return card;
     });
-    body.replaceChildren(h('div', { class: 'summary days' }, cards));
+    body.replaceChildren(h('div', { class: 'weekdays' }, cards));
     if (first && todayCard && todayCard !== cards[0]) whenShown(todayCard, () => todayCard.scrollIntoView({ block: 'start' }));
     }
   }

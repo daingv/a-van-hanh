@@ -1,5 +1,5 @@
 // Lưu sẵn khung app để mở nhanh khi mạng yếu. Không bao giờ đụng vào yêu cầu gửi tới máy chủ.
-const VERSION = 'a-v24';
+const VERSION = 'a-v25';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'mock.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'bg-welcome.webp', 'logo-mark.png'];
 
