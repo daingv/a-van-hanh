@@ -68,6 +68,18 @@ h3 { font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: u
 .checks li small { color: var(--muted); font-size: 13px; }
 .checks .mark { width: 16px; flex: none; color: var(--muted); }
 .checks li.done { color: var(--muted); }
+.checks li.done .txt { text-decoration: line-through; }
+.checks li.go button { display: flex; gap: 10px; width: 100%; align-items: baseline; background: none; border: 0; padding: 2px 0; font: inherit; color: var(--ink-strong); text-align: left; cursor: pointer; }
+.checks li.go .txt { text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.checks li.go .arrow { margin-left: auto; color: var(--muted); padding-left: 8px; }
+.checks.info { margin-bottom: 8px; }
+.donecard { display: flex; gap: 12px; align-items: center; }
+.donecard img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; flex: none; }
+.aform { margin-top: 12px; }
+.trow { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+.trow .tl { width: 64px; flex: none; }
+.tsel { display: flex; align-items: center; gap: 6px; }
+.tsel select { width: 78px; flex: none; padding: 11px 10px; font-size: 18px; }
 .checks li.done .mark { color: var(--ok); }
 
 /* ô nhập */

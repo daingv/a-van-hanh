@@ -332,6 +332,15 @@
     return `còn ${Math.round(min / 1440)} ngày`;
   }
 
+  // bấm vào việc chưa làm → mở đúng trang để làm / báo
+  function itemAction(x) {
+    if (x.act === 'clock') return viewClock;
+    if (x.act === 'opening') return viewOpening;
+    if (x.act === 'closing') return viewClosing;
+    if (x.act === 'task' && x.id) return () => viewTaskDone(x);
+    return null;
+  }
+
   function summaryPanel(sm) {
     if (!sm) return h('div', { class: 'summary' }, h('div', { class: 'sbox' }, spinner('đang tải ca hôm nay…')));
     const t = sm.today, b = t.block, mo = sm.month;
@@ -359,9 +368,13 @@
       parts.push(h('div', { class: 'sbox' },
         h('div', { class: 'stitle' }, 'việc trong ca', h('span', { class: 'scount', text: `${done}/${t.items.length}` })),
         h('div', { class: 'bar' }, h('i', { style: `width:${Math.round(100 * done / t.items.length)}%` })),
-        h('ul', { class: 'checks' }, t.items.map(x => h('li', { class: x.done ? 'done' : '' },
-          h('span', { class: 'mark', text: x.done ? '✓' : '○' }),
-          h('span', null, x.text, x.note ? h('small', { text: ' · ' + x.note }) : ''))))));
+        h('ul', { class: 'checks' }, t.items.map(x => {
+          const go = !x.done && itemAction(x);
+          const body = [h('span', { class: 'mark', text: x.done ? '✓' : '○' }),
+            h('span', { class: 'txt' }, x.text, x.note ? h('small', { text: ' · ' + x.note }) : '')];
+          return h('li', { class: x.done ? 'done' : go ? 'go' : '' },
+            go ? h('button', { type: 'button', onclick: go }, ...body, h('span', { class: 'arrow', text: '›' })) : body);
+        }))));
     }
 
     // ca tiếp theo
@@ -432,8 +445,8 @@
       resend,
       panel,
       h('ul', { class: 'menu' },
+        item('báo cáo đầu ca', viewOpening, openWindow ? null : h('span', { class: 'soon', text: `ngoài giờ ${c.openFrom}–${c.openTo}` })),
         item('chấm công', viewClock),
-        openWindow ? item('báo cáo đầu ca', viewOpening) : null,
         item('báo cáo chốt ca', viewClosing),
         item('lịch tuần', () => viewWeek(0)),
         resendItem,
@@ -445,7 +458,6 @@
         item('tra cứu sự cố', () => viewSoon('tra cứu sự cố'), soon.cloneNode(true)),
         item('danh sách liên hệ', () => viewSoon('danh sách liên hệ'), soon.cloneNode(true)),
         h('hr'),
-        !openWindow ? item('báo cáo đầu ca (ngoài giờ)', viewOpening) : null,
         item('đăng xuất', logout)));
   }
 
@@ -599,6 +611,10 @@
         body, toggle);
     }));
   }
+  const toText = t => t.to && t.to.length ? 'cho ' + t.to.map(firstName).join(', ') : 'cho cả ca sau';
+  const taskInfo = tasks => h('ul', { class: 'checks info' }, tasks.map(t => h('li', null,
+    h('span', { class: 'mark', text: '•' }),
+    h('span', { class: 'txt' }, t.text, h('small', { text: ` · ${firstName(t.from)} giao${t.at ? ' lúc ' + hm(new Date(t.at)) : ''} · ${toText(t)}` })))));
   const skipOf = (store, t) => { const sk = store['skip:' + t.id]; return sk && sk.on ? sk : null; };
   const completedTasks = (tasks, store) => tasks.map(t => {
     const sk = skipOf(store, t);
@@ -607,6 +623,48 @@
   }).filter(Boolean);
   const skipLacking = (tasks, store) => tasks.filter(t => { const sk = skipOf(store, t); return sk && sk.reason.trim().length < 5; })
     .map(t => 'lý do không làm: ' + t.text.slice(0, 30));
+
+  // Việc đã báo xong giữa ca: nhớ trên máy (kèm ảnh) để chốt ca tự gộp vào tin + ảnh Zalo.
+  const doneKey = () => 'taskdone:' + S.name;
+  async function loadDone() {
+    const l = (await DB.get(doneKey())) || [];
+    return l.filter(x => Date.now() - x.at < 14 * 3600e3);
+  }
+  async function rememberDone(x) {
+    const l = (await loadDone()).filter(y => y.id !== x.id);
+    l.push(x);
+    await DB.set(doneKey(), l);
+  }
+
+  function viewTaskDone(t) {
+    const store = {};
+    const missing = h('p', { class: 'missing' });
+    const submit = h('button', { class: 'btn', onclick: async () => {
+      const d = completedTasks([t], store)[0];
+      if (!d) return;
+      submit.disabled = true;
+      submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
+      try {
+        await api('completeTask', d);
+        const ph = store['task:' + t.id];
+        await rememberDone({ id: t.id, text: t.text, skip: d.skip || '', file: !d.skip && ph ? ph.file : null, at: Date.now() });
+        S.info.pendingTasks = Math.max(0, (S.info.pendingTasks || 0) - 1);
+        toast(d.skip ? 'Đã ghi: không làm việc này' : 'Đã báo xong. Ảnh sẽ tự vào báo cáo chốt ca.');
+        viewHome();
+      } catch (e) { toast(e.message, true); submit.textContent = 'báo đã xong'; check(); }
+    } }, 'báo đã xong');
+    const check = () => {
+      const ok = completedTasks([t], store).length > 0;
+      const up = Object.values(store).some(p => p && p.file && !p.id);
+      submit.disabled = !ok || up;
+      missing.textContent = up ? 'đang tải ảnh…' : ok ? '' : skipLacking([t], store).length
+        ? 'ghi lý do không làm (ít nhất vài chữ)' : 'chụp ảnh kết quả, hoặc bấm "không làm việc này" và ghi lý do';
+    };
+    render(back(), h('h2', { class: 'title', text: 'báo việc đã làm' }),
+      h('p', { class: 'sub', text: 'Báo xong ở đây thì lúc chốt ca việc này và ảnh tự vào báo cáo, không cần báo lại.' }),
+      taskList([t], store, check), missing, submit);
+    check();
+  }
 
   // ---------- báo cáo đầu ca ----------
   async function viewOpening() {
@@ -621,7 +679,7 @@
     const missing = h('p', { class: 'missing' });
     const save = () => DB.set(key, { photos: store, note: note.value });
     const check = () => {
-      const lack = areas.filter(a => !(store[a] && store[a].id)).map(a => 'ảnh ' + a).concat(skipLacking(tasks, store));
+      const lack = areas.filter(a => !(store[a] && store[a].id)).map(a => 'ảnh ' + a);
       const uploading = Object.values(store).some(p => p.file && !p.id);
       missing.textContent = lack.length ? `còn thiếu ${lack.length} mục: ${lack.join(', ')}` : uploading ? 'đang tải ảnh…' : '';
       submit.disabled = lack.length > 0 || uploading;
@@ -633,19 +691,19 @@
       submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
       try {
         const photos = Object.fromEntries(areas.map(a => [a, store[a].id]));
-        const r = await api('submitOpening', { photos, completed: completedTasks(tasks, store), note: note.value });
-        const files = Object.entries(store).filter(([k, v]) => v.id && (areas.includes(k) || k.startsWith('task:'))).map(([, v]) => v.file);
+        const r = await api('submitOpening', { photos, completed: [], note: note.value });
+        const files = areas.filter(a => store[a] && store[a].file).map(a => store[a].file);
         await DB.del(key);
-        S.info.pendingTasks = Math.max(0, S.info.pendingTasks - completedTasks(tasks, store).length);
         await saveShare(r, files, 'báo cáo đầu ca');
         viewShare(r, files);
       } catch (e) { toast(e.message, true); submit.textContent = 'gửi báo cáo'; check(); }
     } }, 'gửi báo cáo');
     render(back(), h('h2', { class: 'title', text: 'báo cáo đầu ca' }),
       h('p', { class: 'sub', text: 'Chụp trực tiếp 7 khu vực sau khi mở quầy.' }),
+      tasks.length ? [h('h3', { text: 'ca trước bàn giao' }), taskInfo(tasks),
+        h('p', { class: 'hint', text: 'Chỉ để biết, không cần làm ngay. Làm xong thì bấm vào việc đó ở trang chủ (việc trong ca) để báo.' })] : null,
       h('h3', { text: 'ảnh khu vực' }),
       h('div', { class: 'photos' }, areas.map(a => photoSlot(store, a, a, { required: true, onChange: check }))),
-      h('h3', { text: 'việc được bàn giao' }), taskList(tasks, store, check),
       h('h3', { text: 'ghi chú' }), note,
       missing, submit);
     check();
@@ -656,6 +714,7 @@
     render(back(), h('h2', { class: 'title', text: 'báo cáo chốt ca' }), spinner('đang tải…'));
     let tasks = [];
     try { tasks = await api('tasks'); } catch (e) { toast(e.message, true); }
+    const earlier = await loadDone();
     const c = S.info.cfg;
     const shift = shiftNameNow();
     const evening = shift === 'tối';
@@ -908,8 +967,10 @@
           incident: F.incident, note: F.note,
         };
         const r = await api('submitClosing', payload);
-        const files = Object.entries(store).filter(([k, v]) => v.id && v.file && !NO_ZALO.includes(k)).map(([, v]) => v.file);
+        const files = Object.entries(store).filter(([k, v]) => v.id && v.file && !NO_ZALO.includes(k)).map(([, v]) => v.file)
+          .concat(earlier.filter(x => x.file).map(x => x.file));
         await DB.del(key);
+        await DB.del(doneKey());
         S.info.pendingTasks = Math.max(0, S.info.pendingTasks - payload.completed.length);
         await saveShare(r, files, 'báo cáo chốt ca');
         viewShare(r, files);
@@ -938,7 +999,12 @@
       h('h3', { text: 'ảnh khu vực' }),
       h('div', { class: 'photos' }, c.areas.map(a => photoSlot(store, a, a, { required: true, onChange: update }))),
       h('h3', { text: 'tồn nhanh' + (evening ? ' · ca tối' : '') }), stockWrap,
-      h('h3', { text: 'việc được bàn giao' }), taskList(tasks, store, update),
+      h('h3', { text: 'việc được bàn giao' }),
+      earlier.map(x => h('div', { class: 'card donecard' },
+        x.file ? h('img', { src: URL.createObjectURL(x.file), alt: '' }) : null,
+        h('div', null, h('div', { text: '✓ ' + x.text }),
+          h('div', { class: 'meta', text: `đã báo lúc ${hm(new Date(x.at))}${x.skip ? ' · không làm: ' + x.skip : ' · ảnh tự gửi kèm'}` })))),
+      tasks.length || !earlier.length ? taskList(tasks, store, update) : null,
       h('h3', { text: 'việc khác đã làm' }), othersWrap,
       h('button', { class: 'add', type: 'button', onclick: () => { F.others.push({ text: '' }); drawOthers(); save(); } }, '+ thêm việc khác'),
       h('h3', { text: 'giao việc cho ca sau' }), handWrap,
@@ -1035,33 +1101,77 @@
   }
 
   // ---------- duyệt công ----------
+  // Ô chọn giờ: 2 danh sách giờ / phút (iPhone không tự điền giờ hiện tại như ô time).
+  function timePick(init) {
+    const opt = (n, lab) => h('option', { value: n }, lab);
+    const hs = h('select', { 'aria-label': 'giờ' }, opt('', '--'), [...Array(24)].map((_, i) => opt(pad(i), pad(i))));
+    const ms = h('select', { 'aria-label': 'phút' }, opt('', '--'), [...Array(60)].map((_, i) => opt(pad(i), pad(i))));
+    const el = h('div', { class: 'tsel' }, hs, h('span', { text: ':' }), ms);
+    el.set = v => { const [a, b] = (v || ':').split(':'); hs.value = a || ''; ms.value = b || (a ? '00' : ''); el.dispatchEvent(new Event('change', { bubbles: true })); };
+    el.get = () => hs.value ? hs.value + ':' + (ms.value || '00') : '';
+    hs.addEventListener('change', () => { if (hs.value && !ms.value) ms.value = '00'; });
+    el.set(init);
+    return el;
+  }
+
   async function viewApprovals() {
     render(back(), h('h2', { class: 'title', text: 'duyệt công' }), spinner('đang tải…'));
     let list;
     try { list = await api('approvals'); } catch (e) { render(back(), h('p', { class: 'alert bad', text: e.message })); return; }
     S.info.pendingApprovals = list.length;
+    const mins = v => v ? hmToMin(v) : null;
     const card = it => {
-      const tIn = it.inTime ? hm(new Date(it.inTime)) : '—', tOut = it.outTime ? hm(new Date(it.outTime)) : '—';
+      const tIn = it.inTime ? hm(new Date(it.inTime)) : '', tOut = it.outTime ? hm(new Date(it.outTime)) : '';
+      const plan = it.plan || [];
       const el = h('div', { class: 'card' });
       const img = (b64, alt) => b64 ? h('img', { src: 'data:image/jpeg;base64,' + b64, alt }) : h('img', { alt: 'không có ảnh' });
-      const form = h('div', { hidden: true },
-        h('div', { class: 'row' },
-          h('div', { class: 'grow' }, h('label', { class: 'f', text: 'giờ vào' }), h('input', { type: 'time', value: it.inTime ? tIn : '', name: 'in' })),
-          h('div', { class: 'grow' }, h('label', { class: 'f', text: 'giờ ra' }), h('input', { type: 'time', value: it.outTime ? tOut : '', name: 'out' }))),
-        h('label', { class: 'f', text: 'lý do sửa (bắt buộc)' }), h('input', { type: 'text', name: 'reason', placeholder: 'ví dụ: xác nhận qua camera' }),
-        h('button', { class: 'btn', onclick: async (ev) => {
-          const q = n => form.querySelector(`[name=${n}]`).value;
-          ev.target.disabled = true;
-          try { await api('approve', { id: it.id, op: 'edit', inTime: q('in'), outTime: q('out'), reason: q('reason') }); done('đã sửa'); }
-          catch (e) { toast(e.message, true); ev.target.disabled = false; }
-        } }, 'lưu giờ đã sửa'));
+
+      // gợi ý: khối ca chứa giờ vào → giờ ra = hết ca đó (chỉ khi sau giờ vào)
+      const inM = mins(tIn), outM = mins(tOut);
+      const blk = plan.map(b => ({ ...b, s: hmToMin(b.startHM), e: hmToMin(b.endHM) }));
+      const mine = inM !== null ? blk.find(b => inM >= b.s - 120 && inM < b.e)
+        : outM !== null ? blk.reduce((x, b) => !x || Math.abs(b.e - outM) < Math.abs(x.e - outM) ? b : x, null) : blk[0];
+      const pIn = timePick(tIn || (mine ? mine.startHM : ''));
+      const pOut = timePick(tOut || (mine && (inM === null || mine.e > inM) ? mine.endHM : ''));
+      const preview = h('div', { class: 'hint' });
+      const reason = h('input', { type: 'text', placeholder: 'ví dụ: quên chấm ra, xác nhận qua camera', autocomplete: 'off' });
+      const save = h('button', { class: 'btn' }, 'lưu giờ đã sửa');
+      const calc = () => {
+        const a = mins(pIn.get()), b = mins(pOut.get());
+        if (a === null || b === null) { preview.className = 'warn'; preview.textContent = 'chọn đủ giờ vào và giờ ra'; save.disabled = true; return; }
+        const next = b <= a, w = (next ? b + 1440 : b) - a;
+        const long = w > 12 * 60;
+        preview.className = long ? 'warn' : 'ok';
+        preview.textContent = `→ làm ${dur(w)}${next ? ' (ra hôm sau)' : ''}${long ? ' ⚠ quá 12 giờ, xem lại giờ ra' : ''}`;
+        save.disabled = false;
+      };
+      [pIn, pOut].forEach(p => p.addEventListener('change', calc));
+      const chips = plan.length ? h('div', { class: 'chips' },
+        h('span', { class: 'hint', text: 'theo lịch:' }),
+        blk.map(b => h('button', { type: 'button', class: 'chip', onclick: () => {
+          if (!pIn.get() || !tIn) pIn.set(b.startHM);
+          pOut.set(b.endHM); calc();
+        } }, `${b.codes} ${b.startHM}–${b.endHM}`))) : h('div', { class: 'hint', text: 'không có lịch ca ngày này' });
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        try { await api('approve', { id: it.id, op: 'edit', inTime: pIn.get(), outTime: pOut.get(), reason: reason.value }); done('đã sửa'); }
+        catch (e) { toast(e.message, true); save.disabled = false; }
+      });
+      const missingTime = !it.inTime || !it.outTime;
+      const form = h('div', { class: 'aform', hidden: !missingTime },
+        h('div', { class: 'trow' }, h('span', { class: 'tl', text: 'giờ vào' }), pIn),
+        h('div', { class: 'trow' }, h('span', { class: 'tl', text: 'giờ ra' }), pOut),
+        chips, preview,
+        h('label', { class: 'f', text: 'lý do sửa (bắt buộc)' }), reason,
+        save);
+      calc();
       const done = st => { el.replaceChildren(h('div', { class: 'hint ok', text: `${it.name} · ${it.date}: ${st} ✓` })); S.info.pendingApprovals--; };
       el.append(
         h('div', null, h('strong', { text: it.name }), ` · ${it.date} · ca ${it.shift || '—'}`),
-        h('div', { class: 'meta', text: `vào ${tIn} · ra ${tOut}` }),
+        h('div', { class: 'meta', text: `chấm vào ${tIn || '—'} · chấm ra ${tOut || '—'}${plan.length ? ' · lịch ' + plan.map(b => b.codes + ' ' + b.startHM + '–' + b.endHM).join(', ') : ''}` }),
         h('div', { class: 'todo', text: it.flags }),
         h('div', { class: 'selfies' }, img(it.selfieIn, 'selfie vào'), img(it.selfieOut, 'selfie ra')),
-        h('div', { class: 'row' },
+        missingTime ? h('p', { class: 'hint', text: 'Thiếu giờ chấm, chọn giờ thực tế rồi lưu.' }) : h('div', { class: 'row' },
           h('button', { class: 'btn', style: 'margin:4px 0', onclick: async (ev) => {
             ev.target.disabled = true;
             try { await api('approve', { id: it.id, op: 'approve' }); done('đã duyệt'); }

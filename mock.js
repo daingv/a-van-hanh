@@ -11,7 +11,9 @@
   let tasks = [{ id: 't1', text: 'nấu 2 nồi trân châu', from: 'Hoàng Ngọc Tú', at: Date.now() - 3 * 3600e3, to: ['Nguyễn Trâm Anh', 'Đoàn Hạnh Nguyên'] },
     { id: 't2', text: 'lau tủ mát', from: 'Hoàng Ngọc Tú', at: Date.now() - 3 * 3600e3, to: [] }];
   let approvals = [{ id: 'c1', date: '2026-11-17', name: 'Hoàng Ngọc Tú', shift: 'C', inTime: Date.now() - 26 * 3600e3,
-    outTime: null, flags: 'không có vị trí; quên chấm ra', selfieIn: null, selfieOut: null }];
+    outTime: null, flags: 'không có vị trí; quên chấm ra', selfieIn: null, selfieOut: null,
+    plan: [{ startHM: '13:00', endHM: '18:00', codes: 'C' }] }];
+  let doneTasks = [];
   let n = 0;
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const ok = data => ({ ok: true, data });
@@ -29,9 +31,10 @@
       now: Date.now(),
       today: { block: blk(0, 8, 16, 'FT1'), clock: inNow ? { state: 'in', since } : { state: 'out' },
         workedMin: inNow ? Math.round((Date.now() - since) / 6e4) : 0, mates: ['Nguyễn Trâm Anh'],
-        items: [{ text: 'chấm vào', done: inNow }, { text: 'báo cáo đầu ca', note: cfg.openFrom + '–' + cfg.openTo, done: true },
-          ...tasks.map(t => ({ text: t.text, note: 'bàn giao', done: false })),
-          { text: 'báo cáo chốt ca', note: 'người giữ két · khoảng 15:30', done: false }, { text: 'chấm ra', done: false }] },
+        items: [{ text: 'chấm vào', act: 'clock', done: inNow }, { text: 'báo cáo đầu ca', act: 'opening', note: cfg.openFrom + '–' + cfg.openTo, done: true },
+          ...tasks.filter(t => !t.to.length || t.to.includes(name)).map(t => ({ ...t, note: 'bàn giao từ ' + t.from.split(' ').pop(), done: false, act: 'task' })),
+          ...doneTasks.map(t => ({ text: t.text, note: 'bàn giao từ ' + t.from.split(' ').pop(), done: true })),
+          { text: 'báo cáo chốt ca', act: 'closing', note: 'người giữ két · khoảng 15:30', done: false }, { text: 'chấm ra', act: 'clock', done: false }] },
       next: blk(1, 15, 23, 'C+T'),
       month: { label: 'tháng ' + (new Date().getMonth() + 1), recap: new Date().getDate() === 1, days: 14, minutes: 6420, nightMinutes: 95,
         late: 2, lateMin: 17, early: 0, earlyMin: 0, forgot: 1, pending: 0 }
@@ -74,6 +77,12 @@
       }
       case 'uploadPhoto': return ok({ id: 'mock' + (++n) + 'xxxxxxxx' });
       case 'tasks': return ok(tasks.filter(t => !t.to.length || t.to.includes(b.name)));
+      case 'completeTask': {
+        const t = tasks.find(x => x.id === b.id);
+        if (!t) return err('Việc này đã được xử lý');
+        tasks = tasks.filter(x => x !== t); doneTasks.push(t);
+        return ok({ text: t.text });
+      }
       case 'clock': {
         const t = Date.now();
         if (b.type === 'in') open[b.name] = t; else delete open[b.name];
