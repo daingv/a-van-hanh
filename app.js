@@ -247,6 +247,69 @@
   }
   ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, bumpIdle, { passive: true }));
 
+  // ---------- vuốt từ mép trái để quay lại ----------
+  // Bắt đầu trong 28px sát mép trái, kéo sang phải: trang đi theo ngón tay 1:1.
+  // Thả tay: đã kéo quá 1/3 màn hoặc vuốt nhanh thì quay lại, không thì trượt về chỗ cũ.
+  (function edgeSwipe() {
+    const EDGE = 28;
+    let g = null;
+    const backBtn = () => $app.querySelector('.back');
+    const reset = () => { $app.style.transition = ''; $app.style.transform = ''; document.documentElement.classList.remove('swiping'); };
+    document.addEventListener('touchstart', e => {
+      g = null;
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (t.clientX > EDGE || !backBtn()) return;
+      g = { x0: t.clientX, y0: t.clientY, dx: 0, on: false, hist: [{ x: t.clientX, t: e.timeStamp }] };
+    }, { passive: true });
+    document.addEventListener('touchmove', e => {
+      if (!g) return;
+      const t = e.touches[0], mx = t.clientX - g.x0, my = t.clientY - g.y0;
+      if (!g.on) {
+        if (Math.abs(mx) < 10 && Math.abs(my) < 10) return;
+        if (Math.abs(my) > Math.abs(mx) || mx < 0) { g = null; return; } // cuộn dọc: để trình duyệt lo
+        g.on = true;
+        $app.style.transition = 'none';
+        document.documentElement.classList.add('swiping');
+      }
+      e.preventDefault();
+      g.dx = Math.max(0, mx);
+      $app.style.transform = 'translateX(' + g.dx + 'px)';
+      g.hist.push({ x: t.clientX, t: e.timeStamp });
+      if (g.hist.length > 6) g.hist.shift();
+    }, { passive: false });
+    const end = () => {
+      if (!g || !g.on) { g = null; return; }
+      const a = g.hist[0], z = g.hist[g.hist.length - 1];
+      const v = z.t > a.t ? (z.x - a.x) / (z.t - a.t) : 0; // px/ms
+      const W = window.innerWidth, dx = g.dx;
+      g = null;
+      const reduced = reduceMotion && reduceMotion.matches;
+      // đà tay: điểm dừng dự kiến = vị trí + vận tốc × hệ số giảm tốc (giống cuộn của iOS)
+      const go = dx + Math.max(0, v) * 166 > W * 0.5 || dx > W * 0.35;
+      const btn = backBtn();
+      if (!go || !btn) {
+        $app.style.transition = reduced ? 'none' : 'transform .32s cubic-bezier(.32,.72,0,1)';
+        $app.style.transform = 'translateX(0)';
+        setTimeout(reset, 340);
+        return;
+      }
+      const ms = reduced ? 0 : Math.max(120, Math.min(260, (W - dx) / Math.max(v, 1.2)));
+      $app.style.transition = 'transform ' + ms + 'ms cubic-bezier(.2,.8,.2,1)';
+      $app.style.transform = 'translateX(' + W + 'px)';
+      setTimeout(() => {
+        gestureNav = true;
+        btn.click();
+        gestureNav = false;
+        reset();
+        if (!reduced && $app.animate) $app.animate([{ opacity: 0.4, transform: 'translateX(-32px)' }, { opacity: 1, transform: 'none' }],
+          { duration: 240, easing: 'cubic-bezier(.32,.72,0,1)' });
+      }, ms);
+    };
+    document.addEventListener('touchend', end, { passive: true });
+    document.addEventListener('touchcancel', end, { passive: true });
+  })();
+
   // chuyển trang: vào màn con trượt từ phải, quay về trượt sang phải (cùng đường), cùng màn thì mờ chéo nhẹ
   let navDir = 'fwd';
   const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)');
@@ -257,6 +320,8 @@
   const alive = el => el.isConnected || !!(pendingView && pendingView.contains(el));
   // chạy fn khi phần tử đã thật sự lên màn hình (dùng cho cuộn tới hôm nay…)
   const whenShown = (el, fn, tries = 60) => { if (el.isConnected) setTimeout(fn, 0); else if (tries > 0 && alive(el)) setTimeout(() => whenShown(el, fn, tries - 1), 50); };
+  const scrollMemo = {};
+  let gestureNav = false;
   function render(...nodes) {
     const kids = nodes.flat(Infinity).filter(n => n !== null && n !== undefined && n !== false);
     const before = titleOf($app), had = $app.childElementCount > 0;
@@ -265,8 +330,12 @@
     const after = titleOf(probe);
     const dir = !had ? 'none' : before && before === after ? 'same' : navDir;
     navDir = 'fwd';
-    const swap = () => { $app.replaceChildren(...probe.childNodes); window.scrollTo(0, 0); };
+    if (had && before && dir !== 'same') scrollMemo[before] = window.scrollY;
+    // về trang trước: cuộn đúng chỗ đã xem; sang trang mới: lên đầu; vẽ lại cùng trang: giữ nguyên
+    const y = dir === 'back' && scrollMemo[after] != null ? scrollMemo[after] : dir === 'same' ? window.scrollY : 0;
+    const swap = () => { $app.replaceChildren(...probe.childNodes); window.scrollTo(0, y); };
     if (dir === 'none') return swap();
+    if (gestureNav) { gestureNav = false; return swap(); } // vuốt về: hoạt ảnh do cử chỉ lo
     const reduced = reduceMotion && reduceMotion.matches;
     document.documentElement.dataset.nav = reduced ? 'same' : dir;
     if (document.visibilityState !== 'visible') return swap(); // tab ẩn: không chạy hoạt ảnh
