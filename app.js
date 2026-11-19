@@ -48,8 +48,15 @@
     try {
       if (MOCK) res = await window.MOCK_API(body);
       else {
-        const r = await fetch(CFG.API_URL, { method: 'POST', body: JSON.stringify(body) });
-        res = await r.json();
+        // quá thời gian thì báo lỗi kèm nút Thử lại, không quay mãi
+        const ctl = window.AbortController ? new AbortController() : null;
+        // chỉ các lệnh đọc mới bị cắt sau 45 giây; lệnh ghi (chấm công, gửi báo cáo…) thì đợi tới cùng để không gửi trùng
+        const readOnly = /^(welcome|pinLogin|login|summary|week|tasks|approvals|noticeImg|staffList)$/.test(action);
+        const timer = ctl && readOnly && setTimeout(() => ctl.abort(), 45000);
+        try {
+          const r = await fetch(CFG.API_URL, { method: 'POST', body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined });
+          res = await r.json();
+        } finally { clearTimeout(timer); }
       }
     } catch (e) {
       throw new Error('Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.');
@@ -244,10 +251,17 @@
   let navDir = 'fwd';
   const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)');
   const titleOf = root => { if (!root.querySelector) return ''; const t = root.querySelector('h2.title'); return t ? t.textContent : root.querySelector('.brand:not(.small)') ? '(á)' : ''; };
+  // Màn mới nằm tạm trong "probe" cho tới khi hiệu ứng chuyển trang gắn nó vào màn hình (iPhone: trễ một nhịp).
+  let pendingView = null;
+  // phần tử còn thuộc màn đang hiện (hoặc màn sắp hiện) thì mới cập nhật
+  const alive = el => el.isConnected || !!(pendingView && pendingView.contains(el));
+  // chạy fn khi phần tử đã thật sự lên màn hình (dùng cho cuộn tới hôm nay…)
+  const whenShown = (el, fn, tries = 60) => { if (el.isConnected) setTimeout(fn, 0); else if (tries > 0 && alive(el)) setTimeout(() => whenShown(el, fn, tries - 1), 50); };
   function render(...nodes) {
     const kids = nodes.flat(Infinity).filter(n => n !== null && n !== undefined && n !== false);
     const before = titleOf($app), had = $app.childElementCount > 0;
     const probe = document.createElement('div'); probe.append(...kids.map(k => typeof k === 'string' ? document.createTextNode(k) : k));
+    pendingView = probe;
     const after = titleOf(probe);
     const dir = !had ? 'none' : before && before === after ? 'same' : navDir;
     navDir = 'fwd';
@@ -417,7 +431,7 @@
     }
     // bàn phím rời / máy tính: gõ số, Backspace để xoá
     const onKey = (e) => {
-      if (!dots.isConnected) { document.removeEventListener('keydown', onKey); return; }
+      if (!alive(dots)) { document.removeEventListener('keydown', onKey); return; }
       if (/^[0-9]$/.test(e.key)) press(e.key);
       else if (e.key === 'Backspace') press('del');
     };
@@ -492,9 +506,9 @@
     try {
       const ik = k + '|' + n.title;
       const d = NOTICE_IMG[ik] || (NOTICE_IMG[ik] = await api('noticeImg', { i: k, t: n.title }));
-      if (img.isConnected) img.replaceChildren(h('img', { src: d.data, alt: 'Ảnh kèm thông báo' }));
+      if (alive(img)) img.replaceChildren(h('img', { src: d.data, alt: 'Ảnh kèm thông báo' }));
     } catch (e) {
-      if (img.isConnected) img.replaceChildren(h('p', { class: 'alert bad', text: e.message }));
+      if (alive(img)) img.replaceChildren(h('p', { class: 'alert bad', text: e.message }));
     }
   }
 
@@ -577,7 +591,7 @@
     const resend = h('div');
     const resendItem = h('li', { hidden: true });
     loadShare().then(rec => {
-      if (!rec || !resend.isConnected) return;
+      if (!rec || !alive(resend)) return;
       const open = () => viewShare(rec.r, rec.files || [], rec);
       const left = [!rec.sent.text ? 'tin' : '', !rec.sent.photos && (rec.files || []).length ? 'ảnh' : ''].filter(Boolean);
       if (left.length) {
@@ -592,7 +606,7 @@
     if (i.summary && isLoaded('summary')) setTimeout(prefetchWeek, 300);
     else fresh('summary', {}, 'summary').then(sm => {
       i.summary = sm; i.summaryAt = Date.now();
-      if (panel.isConnected) panel.replaceChildren(summaryPanel(sm));
+      if (alive(panel)) panel.replaceChildren(summaryPanel(sm));
       prefetchWeek();
     }).catch(() => {});
     render(
@@ -627,7 +641,7 @@
     render(back(), h('h2', { class: 'title', text: 'Lịch tuần' }), seg, h('div', { style: 'height:14px' }), body);
     const k = 'week' + week, had = memo.get(k, 12 * 3600e3);
     let first = true;
-    const draw = data => { if (body.isConnected) { drawWeek(data, first); first = false; } };
+    const draw = data => { if (alive(body)) { drawWeek(data, first); first = false; } };
     if (had) draw(had);
     if (had && isLoaded(k)) {
       if (week === 0 && !isLoaded('week1')) fresh('week', { week: 1 }, 'week1').catch(() => {});
@@ -637,7 +651,7 @@
       if (!had || JSON.stringify(d) !== JSON.stringify(had)) draw(d);
       if (week === 0 && !isLoaded('week1')) fresh('week', { week: 1 }, 'week1').catch(() => {});
     }).catch(e => {
-      if (had || !body.isConnected) return;
+      if (had || !alive(body)) return;
       body.replaceChildren(h('p', { class: 'alert bad', text: e.message }), h('button', { class: 'btn', onclick: () => viewWeek(week) }, 'Thử lại'));
     });
     function drawWeek(data, first) {
@@ -689,7 +703,7 @@
       return card;
     });
     body.replaceChildren(h('div', { class: 'summary days' }, cards));
-    if (first && todayCard && todayCard !== cards[0]) todayCard.scrollIntoView({ block: 'start' });
+    if (first && todayCard && todayCard !== cards[0]) whenShown(todayCard, () => todayCard.scrollIntoView({ block: 'start' }));
     }
   }
 
