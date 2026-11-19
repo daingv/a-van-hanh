@@ -615,3 +615,8 @@ input, textarea, [contenteditable="true"] { -webkit-user-select: text; user-sele
 .ptr.spinning i { border-color: var(--line); border-top-color: var(--ink); animation: ptrspin .7s linear infinite; }
 @keyframes ptrspin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ptr.spinning i { animation-duration: 1.6s; } }
+
+/* xem lại lượt đã duyệt (vòng 2) */
+.dbtns { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex-shrink: 0; }
+.drow.open { display: block; padding: 0; }
+.drow.open > .card { margin: 0; box-shadow: none; }

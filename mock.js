@@ -119,7 +119,10 @@
         return ok({ id: b.editOf || 'r' + n, edited: !!b.editOf, alert: dC < -200000, compEach: 0, flags: [], people: [b.name],
           zaloText: `(á) · Chốt ca (thử)\nGiữ ca: ${b.name}\nDoanh thu iPOS: ${fmt(m.ipRevenue)}\nKét: lệch ${fmt(dC)}\nGiao ca sau: ${(b.handover || []).map(h => h.text).join(' · ') || '—'}` });
       }
-      case 'approvals': return isHead ? ok(approvals) : err('Chỉ head-barista hoặc chủ quán được làm việc này');
+      case 'approvals':
+        if (!isHead) return err('Chỉ head-barista hoặc chủ quán được làm việc này');
+        if (b.id) { const x = approvedDone.find(a => a.id === b.id); return x ? ok([{ selfieIn: null, selfieOut: null, plan: [], stage: 'full', ...x }]) : err('Không tìm thấy lượt này'); }
+        return ok(approvals);
       case 'postNotice':
         if (!isHead) return err('Chỉ head-barista hoặc chủ quán được làm việc này');
         NOTICES.unshift({ title: b.title.trim(), body: b.body.trim(), date: Date.now(), img: !!b.photo, tag: b.tag, by: b.name || 'Bạn' });
@@ -132,6 +135,10 @@
         if (b.op === 'reopen') { const x = approvedDone.find(a => a.id === b.id); approvedDone = approvedDone.filter(a => a.id !== b.id);
           if (x) approvals.push({ id: x.id, date: x.date, name: x.name, shift: x.shift, inTime: x.inTime, outTime: x.outTime, flags: x.flags, stage: 'full', selfieIn: null, selfieOut: null, plan: [] });
           return ok({ status: 'chờ duyệt' }); }
+        { const y = approvedDone.find(a => a.id === b.id);
+          if (y) { // vòng 2
+            if (b.op === 'edit') { y.status = 'đã sửa'; y.reason = (y.reason ? y.reason + ' → ' : '') + b.reason; y.inTime = new Date(new Date(y.inTime).toDateString() + ' ' + b.inTime).getTime(); if (b.outTime) y.outTime = new Date(new Date(y.outTime).toDateString() + ' ' + b.outTime).getTime(); y.flags = ''; }
+            y.by = b.name; return ok({ status: y.status }); } }
         { const x = approvals.find(a => a.id === b.id); if (x) approvedDone.unshift({ ...x, status: b.op === 'edit' ? 'đã sửa' : 'đã duyệt', by: b.name, reason: b.reason || '' }); }
         approvals = approvals.filter(a => a.id !== b.id);
         if (b.op === 'edit' && !b.outTime) return ok({ status: 'đã duyệt vào' });

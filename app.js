@@ -1802,7 +1802,7 @@
       el.set = x => { el.value = x || ''; el.dispatchEvent(new Event('change', { bubbles: true })); };
       return el;
     };
-    const card = it => {
+    const card = (it, review) => {
       const tIn = it.inTime ? hm(new Date(it.inTime)) : '', tOut = it.outTime ? hm(new Date(it.outTime)) : '';
       const onlyIn = it.stage === 'in';
       const plan = it.plan || [];
@@ -1857,7 +1857,10 @@
         h('div', { class: 'ameta' }, preview, fill),
         reason, reasonChips, save);
       calc();
-      const done = st => { el.replaceChildren(h('div', { class: 'hint ok', text: `${it.name} · ${dayLabel(it.date)}: ${st}` })); S.info.pendingApprovals--; };
+      const done = st => {
+        el.replaceChildren(h('div', { class: 'hint ok', text: `${it.name} · ${dayLabel(it.date)}: ${st}` }));
+        if (review) setTimeout(() => viewApprovals(), 900); else S.info.pendingApprovals--;
+      };
 
       // ảnh + giờ: chỉ hiện phần đang cần duyệt
       const shot = (b64, label, time, ok) => h('div', { class: 'pt' },
@@ -1870,6 +1873,7 @@
         h('div', { class: 'ahead' },
           h('strong', { text: it.name }),
           h('span', { class: 'asub', text: `${dayLabel(it.date)} · ca ${it.shift || '—'} · ${sched}` })),
+        review ? h('p', { class: 'hint', text: `Vòng 2 · ${ST[it.status] || it.status}${it.by ? ' bởi ' + firstName(it.by) : ''}${it.reason ? ' · ' + it.reason : ''}. Bấm Giữ nguyên, hoặc sửa giờ: cột Cờ tính lại theo giờ mới.` }) : null,
         flags.length ? h('div', { class: 'aflags' }, flags.map(t => h('span', { class: 'aflag', text: flagText(t) }))) : null,
         h('div', { class: 'ptimes' + (onlyIn ? ' one' : '') },
           shot(it.selfieIn, 'Vào', tIn, it.inOk && !onlyIn),
@@ -1880,16 +1884,24 @@
             ev.target.disabled = true;
             try { await api('approve', { id: it.id, op: 'approve' }); done(onlyIn ? 'đã duyệt giờ vào' : 'đã duyệt'); }
             catch (e) { toast(e.message, true); ev.target.disabled = false; }
-          } }, onlyIn ? 'Duyệt giờ vào' : 'Duyệt'),
+          } }, review ? 'Giữ nguyên' : onlyIn ? 'Duyệt giờ vào' : 'Duyệt'),
           h('button', { class: 'btn ghost', onclick: () => { form.hidden = !form.hidden; } }, 'Sửa giờ')),
         form].filter(Boolean));
       return el;
     };
     // đã duyệt / sửa trong 3 ngày: lỡ tay thì mở lại để duyệt lần nữa
     const doneWrap = h('div');
-    const ST = { 'đã duyệt': 'Đã duyệt', 'đã sửa': 'Đã sửa giờ', 'đã duyệt vào': 'Đã duyệt giờ vào' };
+    const ST = { 'đã duyệt': 'Đã duyệt', 'đã sửa': 'Đã sửa giờ', 'đã duyệt vào': 'Đã duyệt giờ vào', 'tự duyệt': 'Tự duyệt' };
     const doneRow = d => {
       const tIn = d.inTime ? hm(new Date(d.inTime)) : '—', tOut = d.outTime ? hm(new Date(d.outTime)) : '—';
+      const look = h('button', { type: 'button', class: 'chip sm on' }, 'Xem lại');
+      look.addEventListener('click', async () => {
+        look.disabled = true;
+        try {
+          const [one] = await api('approvals', { id: d.id });
+          li.replaceWith(h('li', { class: 'drow open' }, card(one, true)));
+        } catch (e) { toast(e.message, true); look.disabled = false; }
+      });
       const btn = h('button', { type: 'button', class: 'chip sm' }, 'Mở lại');
       btn.addEventListener('click', async () => {
         if (btn.dataset.sure !== '1') { btn.dataset.sure = '1'; btn.textContent = 'Bấm lần nữa để mở lại'; btn.classList.add('on'); return; }
@@ -1900,20 +1912,21 @@
           viewApprovals();
         } catch (e) { toast(e.message, true); btn.disabled = false; }
       });
-      return h('li', { class: 'drow' },
+      const li = h('li', { class: 'drow' },
         h('div', null, h('strong', { text: d.name }), h('span', { class: 'asub', text: `${dayLabel(d.date)} · ${tIn}–${tOut}` }),
-          h('span', { class: 'asub', text: `${ST[d.status] || d.status} · ${firstName(d.by)}${d.reason ? ' · ' + d.reason : ''}` })),
-        btn);
+          h('span', { class: 'asub', text: `${ST[d.status] || d.status}${d.by ? ' · ' + firstName(d.by) : ''}${d.flags ? ' · ' + flagText(d.flags.split('; ')[0]) : ''}${d.reason ? ' · ' + d.reason : ''}` })),
+        h('div', { class: 'dbtns' }, look, btn));
+      return li;
     };
     const loadDoneList = () => api('approvalsDone').then(ds => {
       if (!alive(doneWrap)) return;
       doneWrap.replaceChildren(...(ds.length ? [h('h3', { text: 'Đã duyệt gần đây' }),
-        h('p', { class: 'hint', text: 'Lỡ duyệt sai thì bấm Mở lại: lượt đó quay về chờ duyệt, giờ đã sửa trả về giờ chấm gốc.' }),
+        h('p', { class: 'hint', text: 'Xem lại: duyệt vòng 2, sửa tiếp từ giờ hiện tại. Mở lại: trả về giờ chấm gốc và đưa lên chờ duyệt.' }),
         h('ul', { class: 'card dlist' }, ds.map(doneRow))] : []));
     }).catch(() => {});
     render(back(), h('h2', { class: 'title', text: 'Duyệt công' }),
       h('p', { class: 'sub', text: list.length ? `${list.length} lượt cần xem. Lượt bình thường đã tự duyệt.` : 'Không có lượt nào cần duyệt.' }),
-      list.map(card), doneWrap);
+      list.map(it => card(it)), doneWrap);
     loadDoneList();
     pullable(() => viewApprovals());
   }
