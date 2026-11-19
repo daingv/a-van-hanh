@@ -525,3 +525,13 @@ html.swiping #app { background: var(--bg); box-shadow: -10px 0 28px rgba(0,0,0,.
 .tagchip.on { color: #fff; background: var(--tg); border-color: var(--tg); }
 .n-by { margin-top: 18px; }
 .btn.danger { color: #b3261e; margin-top: 20px; }
+
+.pickrow { margin-top: 10px; }
+.pbtn { display: inline-flex; align-items: center; gap: 6px; }
+.pbtn svg { width: 18px; height: 18px; }
+.pbtn.plain { border-color: transparent; color: var(--muted); }
+/* dòng nhãn chủ đề + ngày: .summary small {display:block} đè mất flex, nên ghi rõ ở đây */
+.summary .notices small.nmeta { display: flex; align-items: center; gap: 8px; margin-top: 6px; line-height: 1; }
+.summary .notices small.nmeta > span:not(.tag) { color: var(--muted); }
+p.nmeta { gap: 10px; }
+.summary .notices .row { gap: 12px; }

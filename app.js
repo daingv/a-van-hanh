@@ -63,6 +63,7 @@
     }
     if (!res || !res.ok) throw new Error((res && res.error) || 'Có lỗi, thử lại');
     if (CHANGES_SUMMARY.includes(action)) loaded.keys.delete('summary');
+    if (CHANGES_TASKS.includes(action)) { loaded.keys.delete('tasks'); try { localStorage.removeItem(memo.key('tasks')); } catch (e) { /* bỏ qua */ } }
     return res.data;
   }
 
@@ -221,21 +222,34 @@
       }
       opts.onChange && opts.onChange();
     }
-    input.addEventListener('change', async () => {
-      const f = input.files && input.files[0];
-      input.value = '';
+    // chọn ảnh có sẵn trong album (không có capture: iPhone mở Thư viện ảnh)
+    const lib = h('input', { type: 'file', accept: 'image/*', hidden: true, 'aria-hidden': 'true', tabindex: '-1' });
+    const onPick = inp => async () => {
+      const f = inp.files && inp.files[0];
+      inp.value = '';
       if (!f) return;
       try {
         const small = await compress(f, label, opts.selfie ? 640 : 1080);
         show(small);
         await doUpload(small);
       } catch (e) { toast(e.message, true); }
-    });
+    };
+    input.addEventListener('change', onPick(input));
+    lib.addEventListener('change', onPick(lib));
+    el.append(lib);
     if (store[key] && store[key].file) {
       show(store[key].file);
       setState(store[key].id ? 'ok' : 'err');
     }
     el.trigger = () => input.click();
+    el.pickLib = () => lib.click();
+    el.clear = () => {
+      delete store[key];
+      if (img.src) URL.revokeObjectURL(img.src);
+      img.removeAttribute('src'); img.hidden = true;
+      setState('empty');
+      opts.onChange && opts.onChange();
+    };
     return el;
   }
 
@@ -246,6 +260,11 @@
     if (S.pin) idleTimer = setTimeout(() => { logout(); toast('Đã tự đăng xuất sau 10 phút không dùng'); }, IDLE_MS);
   }
   ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, bumpIdle, { passive: true }));
+
+  // ---------- không cho phóng to / thu nhỏ màn hình (như app thật) ----------
+  // iPhone bỏ qua user-scalable=no trong trang, nên chặn thẳng cử chỉ hai ngón (gesture*) và chạm hai ngón khi kéo.
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(ev => document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 
   // ---------- vuốt từ mép trái để quay lại ----------
   // Bắt đầu trong 28px sát mép trái, kéo sang phải: trang đi theo ngón tay 1:1.
@@ -375,7 +394,8 @@
   const brand = (small) => h('header', { class: 'brand' + (small ? ' small' : '') },
     h('div', { class: 'mark', text: '(á)' }), h('h1', { text: 'Đội hình bạn pha trà' }));
   // chỉ 5 biểu tượng nét mảnh: tiếp, quay lại, xong, xoá, thêm
-  const ICO = { next: 'M9 5l7 7-7 7', back: 'M15 5l-7 7 7 7', check: 'M5 12.5l4.5 4.5L19 7.5', close: 'M6 6l12 12M18 6L6 18', add: 'M12 5v14M5 12h14' };
+  const ICO = { next: 'M9 5l7 7-7 7', back: 'M15 5l-7 7 7 7', check: 'M5 12.5l4.5 4.5L19 7.5', close: 'M6 6l12 12M18 6L6 18', add: 'M12 5v14M5 12h14',
+    camera: 'M4 8.5h3.2L9 6h6l1.8 2.5H20V19H4zM12 16.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z', photo: 'M4 5h16v14H4zM4 16l4.5-4.5 4 4 2.5-2.5L20 18M15.5 9h.01' };
   const ico = n => {
     const NS = 'http://www.w3.org/2000/svg', v = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
     v.setAttribute('viewBox', '0 0 24 24'); v.setAttribute('class', 'ico'); v.setAttribute('aria-hidden', 'true');
@@ -431,7 +451,24 @@
     if (!inflight[k]) inflight[k] = api(action, payload).then(v => { memo.set(k, v); markLoaded(k); return v; }).finally(() => { delete inflight[k]; });
     return inflight[k];
   }
-  const prefetchWeek = () => { if (!isLoaded('week0') && !inflight.week0) fresh('week', { week: 0 }, 'week0').catch(() => {}); };
+  // việc bàn giao (dùng ở báo cáo đầu ca / chốt ca): tải sẵn ở trang chủ, mỗi lần mở app một lần
+  const prefetchTasks = () => { if (!isLoaded('tasks') && !inflight.tasks) fresh('tasks', {}, 'tasks').catch(() => {}); };
+  const prefetchWeek = () => {
+    prefetchTasks();
+    if (!isLoaded('week0') && !inflight.week0) fresh('week', { week: 0 }, 'week0').catch(() => {});
+  };
+  // Đã tải trong lần mở app này: trả ngay. Có bản trong ngày trên máy: trả ngay, tải bản mới ở nền.
+  // Chưa có gì: chờ máy chủ (thường đã được tải sẵn từ trang chủ nên không phải chờ).
+  async function getTasks() {
+    const had = memo.get('tasks', 14 * 3600e3);
+    if (had && (isLoaded('tasks') || !inflight.tasks)) {
+      if (!isLoaded('tasks')) fresh('tasks', {}, 'tasks').catch(() => {});
+      return had;
+    }
+    try { return await fresh('tasks', {}, 'tasks'); } catch (e) { toast(e.message, true); return had || []; }
+  }
+  // gửi báo cáo / báo xong việc: danh sách việc bàn giao đổi, lần sau tải lại
+  const CHANGES_TASKS = ['completeTask', 'submitOpening', 'submitClosing'];
   let loginToken = 0;
   // màn chào: lời chào theo giờ + 1 câu động lực (tab CaiDat cột S:T) + nút Đăng nhập. Không hiện tên nhân viên.
   const QUOTE_FALLBACK = [{ text: 'Ichi-go ichi-e: mỗi lần gặp gỡ chỉ có một lần. Hãy pha từng ly như thể đó là ly duy nhất khách được uống.', by: 'Trà đạo Nhật Bản' }];
@@ -595,7 +632,9 @@
   // chủ đề thông báo → màu nhãn (khớp danh sách NOTICE_TAGS ở máy chủ)
   const NOTICE_TAGS = ['Chung', 'Lịch ca', 'Công thức', 'Quy định', 'Sự kiện', 'Khẩn'];
   const TAG_CLASS = { 'Chung': 'gray', 'Lịch ca': 'blue', 'Công thức': 'green', 'Quy định': 'amber', 'Sự kiện': 'violet', 'Khẩn': 'red' };
-  const tagPill = tag => { const t = tag || 'Chung'; return h('span', { class: 'tag ' + (TAG_CLASS[t] || 'gray'), text: t }); };
+  const normTag = tag => { const s = String(tag || '').trim().replace(/\s+/g, ' '); if (!s) return 'Chung';
+    return NOTICE_TAGS.find(t => t.toLocaleLowerCase('vi') === s.toLocaleLowerCase('vi')) || s; };
+  const tagPill = tag => { const t = normTag(tag); return h('span', { class: 'tag ' + (TAG_CLASS[t] || 'gray'), text: t }); };
   // cập nhật danh sách thông báo đang nhớ trên máy sau khi gửi / gỡ
   const setNotices = list => {
     const sm = memo.get('summary', 24 * 3600e3);
@@ -637,9 +676,17 @@
       onclick: () => { F.tag = t; drawTags(); check(); } }, t)));
     const missing = h('p', { class: 'missing' });
     const photo = () => F.photos.p;
+    let slot = null;
+    const pbtn = (icon, text, fn, cls) => h('button', { type: 'button', class: 'chip pbtn' + (cls ? ' ' + cls : ''), onclick: fn }, ico(icon), text);
+    const pickRow = h('div', { class: 'chips pickrow' });
+    const drawPick = () => pickRow.replaceChildren(
+      pbtn('camera', 'Chụp ảnh', () => slot.trigger()),
+      pbtn('photo', 'Chọn từ album', () => slot.pickLib()),
+      photo() ? pbtn('close', 'Bỏ ảnh', () => slot.clear(), 'plain') : '');
     const check = () => {
       const lack = [!F.tag && 'chủ đề', !title.value.trim() && 'tiêu đề'].filter(Boolean);
       const uploading = photo() && photo().file && !photo().id;
+      if (slot) drawPick();
       missing.textContent = lack.length ? 'còn thiếu: ' + lack.join(', ') : uploading ? 'đang tải ảnh…' : '';
       submit.disabled = lack.length > 0 || !!uploading;
     };
@@ -661,8 +708,8 @@
       h('label', { class: 'f', text: 'Tiêu đề' }), title,
       h('label', { class: 'f', text: 'Nội dung' }), body,
       h('label', { class: 'f', text: 'Hình ảnh' }),
-      h('div', { class: 'photos' }, photoSlot(F.photos, 'p', 'Thêm ảnh (không bắt buộc)', { wide: true, onChange: check })),
-      missing, submit);
+      h('div', { class: 'photos' }, slot = photoSlot(F.photos, 'p', 'Thêm ảnh (không bắt buộc)', { wide: true, onChange: check })),
+      pickRow, missing, submit);
     check();
   }
 
@@ -1006,9 +1053,9 @@
 
   // ---------- báo cáo đầu ca ----------
   async function viewOpening() {
-    render(back(), h('h2', { class: 'title', text: 'Báo cáo đầu ca' }), spinner('Đang tải…'));
+    if (!memo.get('tasks', 14 * 3600e3)) render(back(), h('h2', { class: 'title', text: 'Báo cáo đầu ca' }), spinner('Đang tải…'));
     let tasks = [];
-    try { tasks = await api('tasks'); } catch (e) { toast(e.message, true); }
+    tasks = await getTasks();
     const areas = S.info.cfg.areas;
     const key = draftKey('dau-ca');
     const saved = (await DB.get(key)) || {};
@@ -1049,9 +1096,9 @@
 
   // ---------- báo cáo chốt ca ----------
   async function viewClosing() {
-    render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }), spinner('Đang tải…'));
+    if (!memo.get('tasks', 14 * 3600e3)) render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }), spinner('Đang tải…'));
     let tasks = [];
-    try { tasks = await api('tasks'); } catch (e) { toast(e.message, true); }
+    tasks = await getTasks();
     const earlier = await loadDone();
     const c = S.info.cfg;
     const shift = shiftNameNow();
