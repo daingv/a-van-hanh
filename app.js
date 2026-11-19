@@ -810,6 +810,51 @@
     return h('div', { class: 'summary' }, ...parts);
   }
 
+  // ---------- thông báo đẩy ----------
+  // iPhone: cần iOS 16.4+ và mở app từ màn hình chính. Máy chủ chỉ gửi tín hiệu; service worker hỏi hộp tin của máy
+  // bằng mã bí mật lưu trong máy (IndexedDB, chỗ service worker đọc được).
+  const pushOK = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const isStandalone = () => navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const b64uBytes = s => { const t = s.replace(/-/g, '+').replace(/_/g, '/'); const b = atob(t + '='.repeat((4 - t.length % 4) % 4)); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+  let pushChecked = false;
+  async function pushRegister(ask) {
+    if (MOCK) { if (ask) toast('Bản thử trên máy tính không gửi thông báo thật'); return false; }
+    const key = S.info && S.info.cfg && S.info.cfg.pushKey;
+    if (!pushOK() || !key) return false;
+    if (ask) { if ((await Notification.requestPermission()) !== 'granted') return false; }
+    else if (Notification.permission !== 'granted') return false;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (sub && store.get('a-push-key') && store.get('a-push-key') !== key) { await sub.unsubscribe(); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(key) });
+    let cfg = await DB.get('push');
+    if (!cfg || !cfg.secret) cfg = { secret: [...crypto.getRandomValues(new Uint8Array(24))].map(b => b.toString(16).padStart(2, '0')).join('') };
+    cfg.api = CFG.API_URL;
+    await DB.set('push', cfg);
+    const mark = S.name + '|' + sub.endpoint + '|' + cfg.secret.slice(0, 8);
+    if (!ask && store.get('a-push') === mark) return true;
+    await api('pushSubscribe', { sub: sub.toJSON(), secret: cfg.secret });
+    store.set('a-push', mark); store.set('a-push-key', key);
+    return true;
+  }
+  // nút ở trang chính: chỉ hiện khi máy này chưa bật thông báo cho người đang đăng nhập
+  function pushItem(item) {
+    if (MOCK) return item('Bật thông báo', () => pushRegister(true), h('span', { class: 'soon', text: 'Bản thử' }));
+    if (!pushOK()) return isIOS() && !isStandalone()
+      ? item('Bật thông báo', () => toast('Mở app từ biểu tượng (á) trên màn hình chính rồi bật thông báo. Cần iOS 16.4 trở lên.'), null) : null;
+    if (Notification.permission === 'denied') return item('Thông báo đang bị chặn',
+      () => toast('Vào Cài đặt iPhone → Thông báo → (á) → bật Cho phép thông báo, rồi mở lại app.'), null);
+    if (Notification.permission === 'granted' && String(store.get('a-push') || '').startsWith(S.name + '|')) return null;
+    const btn = item('Bật thông báo', async () => {
+      try {
+        if (await pushRegister(true)) { toast('Đã bật thông báo trên máy này'); viewHome('same'); }
+        else if (Notification.permission === 'denied') toast('Bạn đã chặn thông báo. Vào Cài đặt iPhone → Thông báo → (á) để bật lại.', true);
+      } catch (e) { toast('Chưa bật được thông báo: ' + e.message, true); }
+    }, h('span', { class: 'soon', text: 'Nhắc chấm công, báo cáo' }));
+    return btn;
+  }
+
   function viewHome(dir) {
     navDir = typeof dir === 'string' ? dir : 'back';
     const i = S.info;
@@ -818,6 +863,8 @@
     const openWindow = m >= hmToMin(c.openFrom) && m <= hmToMin(c.openTo);
     const item = (label, fn, extra) => h('li', null, h('button', { onclick: fn }, h('span', { class: 'ml' }, label), extra));
     const soon = h('span', { class: 'soon', text: 'Sắp có' });
+    // máy đã cho phép thông báo: âm thầm đăng ký lại (đổi người dùng máy, đổi khoá…), mỗi lần mở app một lần
+    if (!pushChecked) { pushChecked = true; setTimeout(() => pushRegister(false).catch(() => {}), 1500); }
     if (!isLoaded('summary')) i.summary = memo.get('summary', 12 * 3600e3) || i.summary;
     else if (memo.get('summary', 24 * 3600e3)) i.summary = memo.get('summary', 24 * 3600e3);
     const panel = h('div', null, summaryPanel(i.summary));
@@ -856,6 +903,7 @@
         item('Báo phát sinh', () => viewSoon('Báo phát sinh'), soon.cloneNode(true)),
         i.isHead ? item('Duyệt công', viewApprovals, i.pendingApprovals ? h('span', { class: 'count', text: i.pendingApprovals }) : null) : null,
         i.isHead ? item('Gửi thông báo', viewPostNotice) : null,
+        pushItem(item),
       ),
       h('ul', { class: 'menu' },
         item('Công thức pha chế', () => viewSoon('Công thức pha chế'), soon.cloneNode(true)),
