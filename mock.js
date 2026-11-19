@@ -40,6 +40,7 @@
       next: { ...blk(1, 15, 23, 'C+T'), keeper: !isHead },
       month: { label: 'tháng ' + (new Date().getMonth() + 1), recap: new Date().getDate() === 1, days: 14, minutes: 6420, nightMinutes: 95,
         late: 2, lateMin: 17, early: 0, earlyMin: 0, forgot: 1, pending: 0 },
+      noticeTags: [['Chung', 'xám'], ['Lịch ca', 'xanh dương'], ['Công thức', 'xanh lá'], ['Quy định', 'vàng cam'], ['Sự kiện', 'tím'], ['Khẩn', 'đỏ'], ['Đào tạo', 'hồng']].map(([name, color]) => ({ name, color })),
       notices: NOTICES || (NOTICES = [
         { title: 'Từ thứ Hai, mở cửa sớm 30 phút', body: 'Từ thứ Hai tuần sau quán mở cửa lúc 7:00.\nCa sáng chấm vào trước 6:50 để kịp setup quầy.\n\nAi vướng lịch báo head-barista trước Chủ nhật nhé.', date: at(0, 9, 0), img: false, tag: 'Lịch ca', by: 'Nguyễn Trâm Anh' },
         { title: 'Menu trà mùa đông', body: 'Ba món mới lên menu từ 1/12. Xem ảnh công thức bên dưới, tuần này mỗi bạn pha thử ít nhất một lần.', date: at(-2, 10, 0), img: true, tag: 'Công thức', by: 'Nguyễn Trâm Anh' }])

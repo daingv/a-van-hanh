@@ -116,7 +116,9 @@
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     }));
-    const tx = async (mode, fn) => {
+    // bộ nhớ nháp của máy bị treo (hiếm): chờ tối đa 3 giây rồi coi như không có nháp, để màn báo cáo vẫn mở được
+    const tx = (mode, fn) => Promise.race([tx0(mode, fn), new Promise(res => setTimeout(() => { p = null; res(undefined); }, 3000))]);
+    const tx0 = async (mode, fn) => {
       try {
         const db = await open();
         return await new Promise((res, rej) => {
@@ -133,7 +135,22 @@
       del: k => tx('readwrite', s => s.delete(k)),
     };
   })();
-  const draftKey = form => S.name + '|' + form + '|' + new Date().toDateString();
+  const draftKey = form => S.name + '|' + form + '|' + new Date(now().getTime() - 4 * 3600e3).toDateString();
+  // dòng "đã lưu nháp" + nút Lưu tạm dưới mỗi báo cáo. Nháp nằm trong máy, tắt app mở lại vẫn còn (tới 4 giờ sáng hôm sau).
+  function draftBar(saveNow) {
+    const at = h('span', { class: 'hint', text: 'Điền tới đâu app tự lưu tới đó, thoát ra vào lại vẫn còn.' });
+    const btn = h('button', { type: 'button', class: 'btn ghost', onclick: async () => {
+      btn.disabled = true;
+      const ok = await saveNow();
+      btn.disabled = false;
+      if (ok === undefined) return toast('Chưa lưu được nháp trên máy này. Đừng thoát app, gửi luôn nếu được.', true);
+      toast('Đã lưu tạm. Lúc nào vào lại cũng điền tiếp được.');
+      viewHome('back');
+    } }, 'Lưu tạm, điền tiếp sau');
+    const bar = h('div', { class: 'draftbar' }, at, btn);
+    bar.mark = () => { at.textContent = 'Đã tự lưu nháp lúc ' + hm(now()) + ' · thoát ra vào lại vẫn còn'; };
+    return bar;
+  }
 
   // ---------- ảnh ----------
   function loadImg(file) {
@@ -265,6 +282,10 @@
   // iPhone bỏ qua user-scalable=no trong trang, nên chặn thẳng cử chỉ hai ngón (gesture*) và chạm hai ngón khi kéo.
   ['gesturestart', 'gesturechange', 'gestureend'].forEach(ev => document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
   document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  // nhấn giữ: không hiện menu sao chép (trừ trong ô nhập)
+  const editable = el => el && el.closest && el.closest('input, textarea, [contenteditable="true"]');
+  document.addEventListener('contextmenu', e => { if (!editable(e.target)) e.preventDefault(); });
+  document.addEventListener('selectstart', e => { if (!editable(e.target)) e.preventDefault(); });
 
   // ---------- vuốt từ mép trái để quay lại ----------
   // Bắt đầu trong 28px sát mép trái, kéo sang phải: trang đi theo ngón tay 1:1.
@@ -629,12 +650,22 @@
           seen.includes(noticeKey(n)) ? '' : h('span', { class: 'new', text: 'Mới' }),
           chev())))))];
   }
-  // chủ đề thông báo → màu nhãn (khớp danh sách NOTICE_TAGS ở máy chủ)
-  const NOTICE_TAGS = ['Chung', 'Lịch ca', 'Công thức', 'Quy định', 'Sự kiện', 'Khẩn'];
-  const TAG_CLASS = { 'Chung': 'gray', 'Lịch ca': 'blue', 'Công thức': 'green', 'Quy định': 'amber', 'Sự kiện': 'violet', 'Khẩn': 'red' };
+  // chủ đề thông báo → màu nhãn
+  // danh sách chủ đề + màu do chủ quán đặt ở tab CaiDat (khối AC:AD); máy chủ gửi kèm trang chủ và lúc đăng nhập
+  const TAG_DEFAULT = [['Chung', 'xám'], ['Lịch ca', 'xanh dương'], ['Công thức', 'xanh lá'], ['Quy định', 'vàng cam'], ['Sự kiện', 'tím'], ['Khẩn', 'đỏ']]
+    .map(([name, color]) => ({ name, color }));
+  const COLOR_CLASS = { 'xám': 'gray', 'xanh dương': 'blue', 'xanh lá': 'green', 'vàng cam': 'amber', 'cam': 'amber', 'vàng': 'amber',
+    'tím': 'violet', 'đỏ': 'red', 'hồng': 'pink', 'xanh ngọc': 'teal', 'nâu': 'brown' };
+  const noticeTags = () => {
+    const sm = (S.info && S.info.summary) || memo.get('summary', 24 * 3600e3);
+    const l = (sm && sm.noticeTags) || (S.info && S.info.cfg && S.info.cfg.noticeTags);
+    return l && l.length ? l : TAG_DEFAULT;
+  };
+  const tagInfo = name => noticeTags().find(t => t.name.toLocaleLowerCase('vi') === String(name || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi'));
+  const tagClass = name => { const t = tagInfo(name); return t && COLOR_CLASS[String(t.color || '').trim().toLowerCase()] || 'gray'; };
   const normTag = tag => { const s = String(tag || '').trim().replace(/\s+/g, ' '); if (!s) return 'Chung';
-    return NOTICE_TAGS.find(t => t.toLocaleLowerCase('vi') === s.toLocaleLowerCase('vi')) || s; };
-  const tagPill = tag => { const t = normTag(tag); return h('span', { class: 'tag ' + (TAG_CLASS[t] || 'gray'), text: t }); };
+    const t = tagInfo(s); return t ? t.name : s; };
+  const tagPill = tag => { const t = normTag(tag); return h('span', { class: 'tag ' + tagClass(t), text: t }); };
   // cập nhật danh sách thông báo đang nhớ trên máy sau khi gửi / gỡ
   const setNotices = list => {
     const sm = memo.get('summary', 24 * 3600e3);
@@ -671,8 +702,8 @@
     const title = h('input', { type: 'text', maxlength: 120, placeholder: 'Ví dụ: Đổi giờ họp tuần này', 'aria-label': 'Tiêu đề' });
     const body = h('textarea', { maxlength: 3000, placeholder: 'Nội dung chi tiết (không bắt buộc)', 'aria-label': 'Nội dung', style: 'min-height:140px' });
     const tags = h('div', { class: 'chips tagpick', role: 'radiogroup', 'aria-label': 'Chủ đề' });
-    const drawTags = () => tags.replaceChildren(...NOTICE_TAGS.map(t => h('button', { type: 'button', role: 'radio',
-      class: 'chip tagchip ' + TAG_CLASS[t] + (F.tag === t ? ' on' : ''), 'aria-checked': F.tag === t ? 'true' : 'false',
+    const drawTags = () => tags.replaceChildren(...noticeTags().map(x => x.name).map(t => h('button', { type: 'button', role: 'radio',
+      class: 'chip tagchip ' + tagClass(t) + (F.tag === t ? ' on' : ''), 'aria-checked': F.tag === t ? 'true' : 'false',
       onclick: () => { F.tag = t; drawTags(); check(); } }, t)));
     const missing = h('p', { class: 'missing' });
     const photo = () => F.photos.p;
@@ -702,6 +733,7 @@
       } catch (e) { toast(e.message, true); submit.textContent = 'Gửi cho cả quán'; check(); }
     } }, 'Gửi cho cả quán');
     drawTags();
+    fresh('summary', {}, 'summary').then(sm => { if (S.info) S.info.summary = sm; if (alive(tags)) drawTags(); }).catch(() => {});
     render(back(), h('h2', { class: 'title', text: 'Gửi thông báo' }),
       h('p', { class: 'sub', text: 'Cả quán sẽ thấy ở đầu trang chính.' }),
       h('label', { class: 'f', text: 'Chủ đề' }), tags,
@@ -1062,7 +1094,8 @@
     const store = saved.photos || {};
     const note = h('textarea', { placeholder: 'Ghi chú (không bắt buộc)', value: saved.note || '' });
     const missing = h('p', { class: 'missing' });
-    const save = () => DB.set(key, { photos: store, note: note.value });
+    const bar = draftBar(() => DB.set(key, { photos: store, note: note.value }));
+    const save = () => DB.set(key, { photos: store, note: note.value }).then(r => { if (r !== undefined) bar.mark(); return r; });
     const check = () => {
       const lack = areas.filter(a => !(store[a] && store[a].id)).map(a => 'ảnh ' + a);
       const uploading = Object.values(store).some(p => p.file && !p.id);
@@ -1090,7 +1123,7 @@
       h('h3', { text: 'Ảnh khu vực' }),
       h('div', { class: 'photos' }, areas.map(a => photoSlot(store, a, a, { required: true, onChange: check }))),
       h('h3', { text: 'Ghi chú' }), note,
-      missing, submit);
+      missing, submit, bar);
     check();
   }
 
@@ -1106,10 +1139,12 @@
     const items = c.stock.filter(s => s.scope === 'cả hai' || (evening ? s.scope === 'tối' : s.scope === 'ngày'));
     const key = draftKey('chot-ca');
     const saved = (await DB.get(key)) || {};
-    const F = Object.assign({ money: {}, explains: [], reason: '', stock: {}, others: [], handover: [{ text: '', to: [] }], incident: '', note: '' }, saved.F || {});
+    const F = Object.assign({ money: {}, explains: [], reason: '', stock: {}, discards: [], others: [], handover: [{ text: '', to: [] }], incident: '', note: '' }, saved.F || {});
+    if (!Array.isArray(F.discards)) F.discards = [];
     const store = saved.photos || {};
     delete store['két tiền']; delete store['lịch sử ngân hàng']; // bản nháp từ bản cũ
-    const save = () => DB.set(key, { F, photos: store });
+    const bar = draftBar(() => DB.set(key, { F, photos: store }));
+    const save = () => DB.set(key, { F, photos: store }).then(r => { if (r !== undefined) bar.mark(); return r; });
 
     // tiền
     const moneyField = (k, label, opt) => {
@@ -1269,6 +1304,45 @@
       });
     }
 
+    // hủy: mỗi mục là 1 box, chọn Nguyên vật liệu (ml / g) hoặc Công cụ dụng cụ (cái); không có thì bỏ trống
+    const HUY_REASONS = { nvl: ['Hết hạn', 'Hỏng / ôi', 'Pha lỗi', 'Đổ, rơi'], ccdc: ['Vỡ', 'Hỏng', 'Mất'] };
+    const nvlNames = [...new Set(items.map(it => it.name).concat((c.evening || []).map(it => it.name)))];
+    const huyList = h('datalist', { id: 'huy-nvl' }, nvlNames.map(n => h('option', { value: n })));
+    const huyWrap = h('div');
+    const huyStarted = d => !!(String(d.name || '').trim() || String(d.qty || '').trim() || String(d.reason || '').trim() || store[d.k]);
+    function drawHuy() {
+      huyWrap.replaceChildren(huyList, ...F.discards.map((d, idx) => {
+        d.k = d.k || 'huy:' + Date.now() + ':' + idx;
+        d.kind = d.kind === 'ccdc' ? 'ccdc' : 'nvl';
+        const tool = d.kind === 'ccdc';
+        const kindSeg = h('div', { class: 'seg huykind' }, [['nvl', 'Nguyên vật liệu'], ['ccdc', 'Công cụ dụng cụ']].map(([k, t]) =>
+          h('button', { type: 'button', class: d.kind === k ? 'on' : '', 'aria-pressed': d.kind === k ? 'true' : 'false',
+            onclick: () => { if (d.kind === k) return; d.kind = k; d.reason = ''; drawHuy(); update(); } }, t)));
+        const name = h('input', { type: 'text', autocomplete: 'off', value: d.name || '', placeholder: tool ? 'Ví dụ: ly thuỷ tinh 350ml' : 'Ví dụ: sữa tươi',
+          'aria-label': 'tên ' + (tool ? 'dụng cụ' : 'nguyên liệu'), list: tool ? null : 'huy-nvl' });
+        name.addEventListener('input', () => { d.name = name.value; update(); });
+        const qty = h('input', { type: 'text', inputmode: tool ? 'numeric' : 'decimal', autocomplete: 'off', value: d.qty || '', 'aria-label': 'số lượng hủy' });
+        qty.addEventListener('input', () => {
+          let v = qty.value.replace(',', '.').replace(tool ? /\D/g : /[^\d.]/g, '');
+          const p = v.indexOf('.'); if (p >= 0) v = v.slice(0, p + 1) + v.slice(p + 1).replace(/\./g, '');
+          d.qty = v; qty.value = v; update();
+        });
+        const unit = tool ? h('span', { class: 'unit', text: 'cái' }) : unitSeg(() => d.unit || 'ml', u => { d.unit = u; });
+        const reason = h('input', { type: 'text', autocomplete: 'off', value: d.reason || '', placeholder: 'Lý do', 'aria-label': 'lý do hủy' });
+        reason.addEventListener('input', () => { d.reason = reason.value; drawChips(); update(); });
+        const chips = h('div', { class: 'chips' });
+        const drawChips = () => chips.replaceChildren(...HUY_REASONS[d.kind].map(r => h('button', { type: 'button', class: 'chip' + (d.reason === r ? ' on' : ''),
+          onclick: () => { d.reason = r; reason.value = r; drawChips(); update(); } }, r)));
+        drawChips();
+        return h('div', { class: 'card huy' + (tool ? ' tool' : '') },
+          h('div', { class: 'row' }, kindSeg, h('div', { class: 'grow' }),
+            h('button', { class: 'x', type: 'button', 'aria-label': 'xoá mục hủy', onclick: () => { delete store[d.k]; F.discards.splice(F.discards.indexOf(d), 1); drawHuy(); update(); } }, ico('close'))),
+          h('div', { class: 'stock' }, h('div', { class: 'name' }, name), h('div', { class: 'mlbox' }, qty, unit)),
+          h('div', { style: 'margin-top:10px' }, reason), chips,
+          h('div', { class: 'photos', style: 'margin-top:10px' }, photoSlot(store, d.k, 'ảnh (không bắt buộc)', { onChange: update })));
+      }));
+    }
+
     // việc khác (tự điền) và giao ca sau
     const othersWrap = h('div');
     function drawOthers() {
@@ -1326,6 +1400,12 @@
       moneyPhotos.concat(c.areas).forEach(a => { if (!(store[a] && store[a].id)) out.push('ảnh ' + a); });
       items.forEach(it => { if (F.stock[it.name].left === '') out.push('tồn ' + it.name); });
       evItems.forEach(it => { if (!String(F.evening[it.name] || '').length || F.evening[it.name] === '.') out.push(it.name); });
+      F.discards.filter(huyStarted).forEach(d => {
+        const nm = String(d.name || '').trim() || (d.kind === 'ccdc' ? 'dụng cụ' : 'nguyên liệu');
+        if (!String(d.name || '').trim()) out.push('tên mục hủy');
+        if (!(Number(d.qty) > 0)) out.push('số lượng hủy ' + nm);
+        if (!String(d.reason || '').trim()) out.push('lý do hủy ' + nm);
+      });
       return out.concat(skipLacking(tasks, store));
     }
 
@@ -1380,6 +1460,8 @@
           stock: Object.fromEntries(items.map(it => [it.name, { unit: F.stock[it.name].unit || 'ml', left: F.stock[it.name].left, refill: evening && F.stock[it.name].on ? F.stock[it.name].refill : '' }])),
           evening: Object.fromEntries(evItems.map(it => [it.name, F.evening[it.name]])),
           completed: completedTasks(tasks, store),
+          discards: F.discards.filter(huyStarted).map(d => ({ kind: d.kind, name: d.name, qty: d.qty, unit: d.kind === 'ccdc' ? 'cái' : (d.unit || 'ml'),
+            reason: d.reason, photoId: store[d.k] && store[d.k].id || '' })),
           others: F.others.filter(o => o.text.trim()).map(o => ({ text: o.text, photoId: store[o.k] && store[o.k].id })),
           handover: F.handover.filter(t => t.text.trim()).map(t => ({ text: t.text, to: t.to || [] })),
           incident: F.incident, note: F.note,
@@ -1422,6 +1504,10 @@
       evItems.length ? [h('h3', { text: 'Kiểm nguyên liệu ca tối' }),
         h('p', { class: 'hint', text: 'Chỉ ca tối. Cân hoặc nhìn vạch rồi gõ lượng còn lại của từng loại, chọn ml hoặc g bên cạnh (số lẻ dùng dấu chấm, ví dụ 12.5).' }),
         evWrap] : null,
+      h('h3', { text: 'Hủy' }),
+      h('p', { class: 'hint', text: 'Nguyên vật liệu hỏng, hết hạn, pha lỗi… hoặc công cụ dụng cụ bị vỡ, hỏng. Mỗi món một box, không có thì bỏ qua.' }),
+      huyWrap,
+      h('button', { class: 'add', type: 'button', onclick: () => { F.discards.push({ kind: 'nvl', name: '', qty: '', unit: 'ml', reason: '' }); drawHuy(); update(); } }, ico('add'), 'Thêm mục hủy'),
       h('h3', { text: 'Việc được bàn giao' }),
       earlier.map(x => h('div', { class: 'card donecard' },
         x.file ? h('img', { src: URL.createObjectURL(x.file), alt: '' }) : null,
@@ -1434,8 +1520,8 @@
       h('button', { class: 'add', type: 'button', onclick: () => { F.handover.push({ text: '', to: [] }); drawHand(); save(); } }, ico('add'), 'Thêm việc'),
       h('h3', { text: 'Sự cố' }), incident,
       h('h3', { text: 'Ghi chú' }), note,
-      missing, submit);
-    drawEx(); drawOthers(); drawHand(); update();
+      missing, submit, bar);
+    drawEx(); drawHuy(); drawOthers(); drawHand(); update();
   }
 
   // ---------- gửi Zalo (2 bước, đã thử trên iPhone) ----------
