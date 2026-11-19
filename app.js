@@ -55,6 +55,7 @@
       throw new Error('Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.');
     }
     if (!res || !res.ok) throw new Error((res && res.error) || 'Có lỗi, thử lại');
+    if (CHANGES_SUMMARY.includes(action)) loaded.keys.delete('summary');
     return res.data;
   }
 
@@ -171,29 +172,44 @@
     return (await api('uploadPhoto', { label, data: await toB64(file) })).id;
   }
 
-  /** Ô chụp ảnh. store[key] = {id, file}. onChange gọi sau mỗi lần đổi trạng thái. */
+  /**
+   * Ô chụp ảnh. store[key] = {id, file}. onChange gọi sau mỗi lần đổi trạng thái.
+   * Mỗi ô chỉ còn 1 dòng chữ (tên khu vực); trạng thái nói bằng hình:
+   * trống = dấu + · đang tải = vòng xoay ở góc · đã tải = dấu tích xanh · lỗi = viền đỏ cam + "Chạm để chụp lại".
+   */
   function photoSlot(store, key, label, opts = {}) {
     const input = h('input', { type: 'file', accept: 'image/*', capture: opts.selfie ? 'user' : 'environment', 'aria-label': 'Chụp ảnh ' + label });
-    const lbl = h('span', { class: 'lbl', text: label });
-    const st = h('span', { class: 'st', hidden: true });
-    const el = h('label', { class: 'slot' + (opts.required ? ' req' : '') + (opts.wide ? ' wide' : '') }, lbl, st, input);
-    const show = (file) => {
-      el.querySelectorAll('img').forEach(i => i.remove());
-      if (file) { el.prepend(h('img', { src: URL.createObjectURL(file), alt: '' })); el.classList.add('has'); }
+    const img = h('img', { alt: '', hidden: true });
+    const plus = h('span', { class: 'plus', 'aria-hidden': 'true' }, ico('add'));
+    const badge = h('span', { class: 'badge', hidden: true });
+    const retry = h('span', { class: 'retry', text: 'Chạm để chụp lại', hidden: true });
+    const name = h('span', { class: 'name', text: label });
+    const el = h('label', { class: 'slot' + (opts.required ? '' : ' opt') + (opts.wide ? ' wide' : '') }, img, plus, badge, retry, name, input);
+    const setState = s => {
+      el.dataset.state = s;
+      plus.hidden = s !== 'empty';
+      retry.hidden = s !== 'err';
+      badge.hidden = s !== 'ok' && s !== 'load';
+      badge.className = 'badge ' + s;
+      badge.setAttribute('aria-label', s === 'ok' ? 'Đã tải' : 'Đang tải');
+      badge.replaceChildren(s === 'ok' ? ico('check') : s === 'load' ? h('i') : '');
     };
-    const setSt = (txt, cls) => { st.hidden = !txt; st.textContent = txt || ''; st.className = 'st' + (cls ? ' ' + cls : ''); };
+    const show = file => {
+      if (!file) return;
+      if (img.src) URL.revokeObjectURL(img.src);
+      img.src = URL.createObjectURL(file);
+      img.hidden = false;
+    };
+    setState('empty');
     async function doUpload(file) {
-      setSt('Đang tải…');
+      setState('load');
       store[key] = { file, id: null, label };
       opts.onChange && opts.onChange();
       try {
         const id = await upload(file, label);
-        if (store[key] && store[key].file === file) {
-          store[key].id = id;
-          setSt('Đã tải', 'ok');
-        }
+        if (store[key] && store[key].file === file) { store[key].id = id; setState('ok'); }
       } catch (e) {
-        setSt('Lỗi · chạm ảnh để chụp lại', 'bad');
+        setState('err');
         toast(e.message, true);
       }
       opts.onChange && opts.onChange();
@@ -210,7 +226,7 @@
     });
     if (store[key] && store[key].file) {
       show(store[key].file);
-      setSt(store[key].id ? 'đã tải' : 'chưa tải · chạm để chụp lại', store[key].id ? 'ok' : 'bad');
+      setState(store[key].id ? 'ok' : 'err');
     }
     el.trigger = () => input.click();
     return el;
@@ -263,6 +279,7 @@
 
   function logout() {
     memo.clear();
+    loaded.keys.clear();
     S.name = S.pin = S.info = null;
     clearTimeout(idleTimer);
     viewLogin();
@@ -292,12 +309,22 @@
     clear() { try { Object.keys(localStorage).filter(k => k.startsWith('c:')).forEach(k => localStorage.removeItem(k)); } catch (e) { /* bỏ qua */ } }
   };
   const inflight = {};
+  // Đã tải trong lần mở app này thì dùng lại, không hỏi máy chủ nữa. Tắt hẳn app (hoặc sang ngày mới) là tải lại.
+  const loaded = { keys: new Set(), day: '' };
+  const isLoaded = k => {
+    const d = new Date().toDateString();
+    if (loaded.day !== d) { loaded.keys.clear(); loaded.day = d; }
+    return loaded.keys.has(k);
+  };
+  const markLoaded = k => { isLoaded(k); loaded.keys.add(k); };
+  // các việc làm thay đổi số ở trang chủ: xong việc là tải lại trang chủ
+  const CHANGES_SUMMARY = ['clock', 'completeTask', 'submitOpening', 'submitClosing', 'approve'];
   // cùng một yêu cầu đang chạy thì dùng chung, không gọi máy chủ lần hai
   function fresh(action, payload, k) {
-    if (!inflight[k]) inflight[k] = api(action, payload).then(v => { memo.set(k, v); return v; }).finally(() => { delete inflight[k]; });
+    if (!inflight[k]) inflight[k] = api(action, payload).then(v => { memo.set(k, v); markLoaded(k); return v; }).finally(() => { delete inflight[k]; });
     return inflight[k];
   }
-  const prefetchWeek = () => { if (!memo.get('week0', 10 * 60e3) && !inflight.week0) fresh('week', { week: 0 }, 'week0').catch(() => {}); };
+  const prefetchWeek = () => { if (!isLoaded('week0') && !inflight.week0) fresh('week', { week: 0 }, 'week0').catch(() => {}); };
   let loginToken = 0;
   // màn chào: lời chào theo giờ + 1 câu động lực (tab CaiDat cột S:T) + nút Đăng nhập. Không hiện tên nhân viên.
   const QUOTE_FALLBACK = [{ text: 'Ichi-go ichi-e: mỗi lần gặp gỡ chỉ có một lần. Hãy pha từng ly như thể đó là ly duy nhất khách được uống.', by: 'Trà đạo Nhật Bản' }];
@@ -378,7 +405,7 @@
         const who = await api('pinLogin', { pin, dev: deviceId() }, false);
         S.name = who.name; S.pin = pin;
         if (who.info) { S.info = who.info; S.offset = who.info.serverNow - Date.now(); } // máy chủ mới: có sẵn dữ liệu
-        if (S.info && who.summary) { S.info.summary = who.summary; S.info.summaryAt = Date.now(); memo.set('summary', who.summary); }
+        if (S.info && who.summary) { S.info.summary = who.summary; S.info.summaryAt = Date.now(); memo.set('summary', who.summary); markLoaded('summary'); }
         else await refreshInfo();
         document.removeEventListener('keydown', onKey);
         bumpIdle();
@@ -449,10 +476,11 @@
     return [h('div', { class: 'sec sec-top' }, h('span', { text: 'Thông báo' })),
       h('div', { class: 'card' }, h('ul', { class: 'notices' }, list.map((n, k) => h('li', null,
         h('button', { type: 'button', class: 'row', onclick: () => viewNotice(n, k) },
-          seen.includes(noticeKey(n)) ? h('span', { class: 'nd' }) : h('span', { class: 'nd on', 'aria-label': 'Chưa đọc' }),
           h('span', { class: 'txt' }, h('span', { class: 'nt', text: n.title }), n.date ? h('small', { text: ddmm(n.date) }) : ''),
+          seen.includes(noticeKey(n)) ? '' : h('span', { class: 'new', text: 'Mới' }),
           chev())))))];
   }
+  const NOTICE_IMG = {}; // ảnh thông báo đã xem trong lần mở app này
   async function viewNotice(n, k) {
     const key = noticeKey(n);
     store.set('a-seen', (store.get('a-seen') || []).filter(x => x !== key).concat(key).slice(-60));
@@ -462,7 +490,8 @@
     if (!n.img) return;
     img.replaceChildren(spinner('Đang tải ảnh…'));
     try {
-      const d = await api('noticeImg', { i: k, t: n.title });
+      const ik = k + '|' + n.title;
+      const d = NOTICE_IMG[ik] || (NOTICE_IMG[ik] = await api('noticeImg', { i: k, t: n.title }));
       if (img.isConnected) img.replaceChildren(h('img', { src: d.data, alt: 'Ảnh kèm thông báo' }));
     } catch (e) {
       if (img.isConnected) img.replaceChildren(h('p', { class: 'alert bad', text: e.message }));
@@ -542,7 +571,8 @@
     const openWindow = m >= hmToMin(c.openFrom) && m <= hmToMin(c.openTo);
     const item = (label, fn, extra) => h('li', null, h('button', { onclick: fn }, h('span', { class: 'ml' }, label), extra));
     const soon = h('span', { class: 'soon', text: 'Sắp có' });
-    if (!i.summary) i.summary = memo.get('summary', 12 * 3600e3);
+    if (!isLoaded('summary')) i.summary = memo.get('summary', 12 * 3600e3) || i.summary;
+    else if (memo.get('summary', 24 * 3600e3)) i.summary = memo.get('summary', 24 * 3600e3);
     const panel = h('div', null, summaryPanel(i.summary));
     const resend = h('div');
     const resendItem = h('li', { hidden: true });
@@ -559,7 +589,7 @@
       resendItem.replaceChildren(h('button', { onclick: open }, 'Gửi lại báo cáo gần nhất vào Zalo'));
     });
     // lấy số mới nhất mỗi lần về trang chủ (sau khi chấm công, gửi báo cáo…), không chặn màn hình
-    if (i.summaryAt && Date.now() - i.summaryAt < 20000) setTimeout(prefetchWeek, 300);
+    if (i.summary && isLoaded('summary')) setTimeout(prefetchWeek, 300);
     else fresh('summary', {}, 'summary').then(sm => {
       i.summary = sm; i.summaryAt = Date.now();
       if (panel.isConnected) panel.replaceChildren(summaryPanel(sm));
@@ -599,9 +629,13 @@
     let first = true;
     const draw = data => { if (body.isConnected) { drawWeek(data, first); first = false; } };
     if (had) draw(had);
+    if (had && isLoaded(k)) {
+      if (week === 0 && !isLoaded('week1')) fresh('week', { week: 1 }, 'week1').catch(() => {});
+      return;
+    }
     fresh('week', { week }, k).then(d => {
       if (!had || JSON.stringify(d) !== JSON.stringify(had)) draw(d);
-      if (week === 0 && !memo.get('week1', 10 * 60e3)) fresh('week', { week: 1 }, 'week1').catch(() => {});
+      if (week === 0 && !isLoaded('week1')) fresh('week', { week: 1 }, 'week1').catch(() => {});
     }).catch(e => {
       if (had || !body.isConnected) return;
       body.replaceChildren(h('p', { class: 'alert bad', text: e.message }), h('button', { class: 'btn', onclick: () => viewWeek(week) }, 'Thử lại'));

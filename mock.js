@@ -1,10 +1,12 @@
-// Máy chủ giả lập để xem thử giao diện khi chưa có API_URL. PIN nào 6 số cũng đúng, trừ 000000.
+// Máy chủ giả lập để xem thử giao diện khi chưa có API_URL. Mã đăng nhập: 111111 (Nguyên, head), 222222 (Anh), 333333 (Tú); 6 số khác cũng đúng khi đã có tên, trừ 000000.
 (() => {
   if (window.APP_CONFIG && window.APP_CONFIG.API_URL) return;
   const staff = { 'Đoàn Hạnh Nguyên': 'head-barista', 'Nguyễn Trâm Anh': 'barista', 'Hoàng Ngọc Tú': 'barista' };
   const cfg = {
     areas: ['Mặt quầy pha chế', 'Quầy thu ngân', 'Back bar', 'Gầm cầu thang', 'Sàn nhà vệ sinh', 'Đồ dùng cho khách trong nhà vệ sinh', 'Sân trước'],
     stock: ['Kem matcha', 'Kem mè đen', 'Sữa hạt dẻ cười', 'Sốt đào xay', 'Nước ép dưa lưới'].map(n => ({ name: n, unit: '', scope: 'cả hai' })),
+    evening: [{ name: 'Bột matcha', group: 'trà', unit: 'g' }, { name: 'Bột hojicha', group: 'trà', unit: 'g' },
+      { name: 'Trà ủ lạnh', group: 'nguyên liệu pha chế', unit: 'ml' }, { name: 'Sữa tươi', group: 'nguyên liệu pha chế', unit: 'ml' }],
     th: { note: 20000, comp: 100000, alert: 200000 }, aft: '15:00', eve: '20:00', openFrom: '07:00', openTo: '10:30'
   };
   let open = {};
@@ -29,15 +31,18 @@
     const inNow = !!since;
     const out = {
       now: Date.now(),
-      today: { block: blk(0, 8, 16, 'FT1'), clock: inNow ? { state: 'in', since } : { state: 'out' },
+      today: { block: { ...blk(0, 8, 16, 'FT1'), keeper: isHead }, clock: inNow ? { state: 'in', since } : { state: 'out' },
         workedMin: inNow ? Math.round((Date.now() - since) / 6e4) : 0, mates: ['Nguyễn Trâm Anh'],
         items: [{ text: 'chấm vào', act: 'clock', done: inNow }, { text: 'báo cáo đầu ca', act: 'opening', note: cfg.openFrom + '–' + cfg.openTo, done: true },
           ...tasks.filter(t => !t.to.length || t.to.includes(name)).map(t => ({ ...t, note: 'bàn giao từ ' + t.from.split(' ').pop(), done: false, act: 'task' })),
           ...doneTasks.map(t => ({ text: t.text, note: 'bàn giao từ ' + t.from.split(' ').pop(), done: true })),
           { text: 'báo cáo chốt ca', act: 'closing', note: 'người giữ két · khoảng 15:30', done: false }, { text: 'chấm ra', act: 'clock', done: false }] },
-      next: blk(1, 15, 23, 'C+T'),
+      next: { ...blk(1, 15, 23, 'C+T'), keeper: !isHead },
       month: { label: 'tháng ' + (new Date().getMonth() + 1), recap: new Date().getDate() === 1, days: 14, minutes: 6420, nightMinutes: 95,
-        late: 2, lateMin: 17, early: 0, earlyMin: 0, forgot: 1, pending: 0 }
+        late: 2, lateMin: 17, early: 0, earlyMin: 0, forgot: 1, pending: 0 },
+      notices: [
+        { title: 'Từ thứ Hai, mở cửa sớm 30 phút', body: 'Từ thứ Hai tuần sau quán mở cửa lúc 7:00.\nCa sáng chấm vào trước 6:50 để kịp setup quầy.\n\nAi vướng lịch báo head-barista trước Chủ nhật nhé.', date: at(0, 9, 0), img: false },
+        { title: 'Menu trà mùa đông', body: 'Ba món mới lên menu từ 1/12. Xem ảnh công thức bên dưới, tuần này mỗi bạn pha thử ít nhất một lần.', date: at(-2, 10, 0), img: true }]
     };
     if (isHead) out.team = { openingDone: true, notIn: [{ name: 'Hoàng Ngọc Tú', start: '08:00' }],
       lastClosing: { at: at(-1, 22, 40), by: 'Nguyễn Trâm Anh', shift: 'T', diffCash: -50000, uCash: 0, diffBank: -100000, uBank: -100000 } };
@@ -47,6 +52,13 @@
   window.MOCK_API = async (b) => {
     await wait(b.action === 'uploadPhoto' ? 500 : 300);
     if (b.action === 'staffList') return ok(Object.keys(staff));
+    if (b.action === 'welcome') return ok({ quotes: [
+      { text: 'Ichi-go ichi-e: mỗi lần gặp gỡ chỉ có một lần. Hãy pha từng ly như thể đó là ly duy nhất khách được uống.', by: 'Trà đạo Nhật Bản' },
+      { text: 'Kaizen: hôm nay làm tốt hơn hôm qua một chút là đủ.', by: 'Triết lý Nhật Bản' }], bg: null });
+    if (b.action === 'pinLogin') {
+      const name = { 111111: 'Đoàn Hạnh Nguyên', 222222: 'Nguyễn Trâm Anh', 333333: 'Hoàng Ngọc Tú' }[b.pin];
+      return name ? ok({ name }) : err('Mã không đúng (lần 1/5). Nếu chắc chắn đúng, báo chủ quán kiểm tra.');
+    }
     if (!staff[b.name] || !/^\d{6}$/.test(b.pin || '') || b.pin === '000000') return err('Sai tên hoặc PIN');
     const isHead = staff[b.name] === 'head-barista';
     switch (b.action) {
@@ -55,6 +67,7 @@
           shifts: [{ code: 'FT1', start: '08:00', end: '16:00' }], openSince: open[b.name] || null,
           pendingTasks: tasks.length, pendingApprovals: isHead ? approvals.length : 0, cfg, staff: Object.keys(staff), summary: summary(b.name, isHead) });
       case 'summary': return ok(summary(b.name, isHead));
+      case 'noticeImg': return ok({ ver: 'demo', data: 'bg-welcome.webp' });
       case 'week': {
         const mon = new Date(); mon.setHours(0, 0, 0, 0); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7) + 7 * (b.week || 0));
         const plan = { 'Đoàn Hạnh Nguyên': ['FT1', 'FT1', '', 'FT2', 'FT1+16-18', 'S+T', ''],
