@@ -18,6 +18,8 @@
     { id: 'c1', date: '2026-11-17', name: 'Hoàng Ngọc Tú', shift: 'C', inTime: Date.now() - 26 * 3600e3,
     outTime: null, flags: 'không có vị trí; quên chấm ra', selfieIn: null, selfieOut: null,
     plan: [{ startHM: '13:00', endHM: '18:00', codes: 'C' }] }];
+  let approvedDone = [{ id: 'c9', date: '2026-11-18', name: 'Hoàng Ngọc Tú', shift: 'T', inTime: Date.now() - 864e5 - 5 * 3600e3, outTime: Date.now() - 864e5,
+    flags: 'về sớm 12 phút', status: 'đã duyệt', by: 'Đoàn Hạnh Nguyên', reason: '' }];
   let doneTasks = [];
   let n = 0;
   const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -39,7 +41,8 @@
         items: [{ text: 'chấm vào', act: 'clock', done: inNow }, { text: 'báo cáo đầu ca', act: 'opening', note: cfg.openFrom + '–' + cfg.openTo, done: true },
           ...tasks.filter(t => !t.to.length || t.to.includes(name)).map(t => ({ ...t, note: 'bàn giao từ ' + t.from.split(' ').pop(), done: false, act: 'task' })),
           ...doneTasks.map(t => ({ text: t.text, note: 'bàn giao từ ' + t.from.split(' ').pop(), done: true })),
-          { text: 'báo cáo chốt ca', act: 'closing', note: 'người giữ két · khoảng 15:30', done: false }, { text: 'chấm ra', act: 'clock', done: false }] },
+          { text: 'báo cáo chốt ca', act: 'closing', note: 'người giữ két · khoảng 15:30', done: false }, { text: 'chấm ra', act: 'clock', done: false }],
+        closing: [{ at: '16:00', names: ['Đoàn Hạnh Nguyên'], keeperSet: true, by: '' }, { at: '23:00', names: ['Hoàng Ngọc Tú'], keeperSet: false, by: '' }] },
       next: { ...blk(1, 15, 23, 'C+T'), keeper: !isHead },
       month: { label: 'tháng ' + (new Date().getMonth() + 1), recap: new Date().getDate() === 1, days: 14, minutes: 6420, nightMinutes: 95,
         late: 2, lateMin: 17, early: 0, earlyMin: 0, forgot: 1, pending: 0 },
@@ -113,7 +116,7 @@
       case 'submitClosing': {
         const m = b.money;
         const dC = m.cash - (m.opening || 0) - m.ipCash;
-        return ok({ id: 'r' + n, alert: dC < -200000, compEach: 0, flags: [], people: [b.name],
+        return ok({ id: b.editOf || 'r' + n, edited: !!b.editOf, alert: dC < -200000, compEach: 0, flags: [], people: [b.name],
           zaloText: `(á) · Chốt ca (thử)\nGiữ ca: ${b.name}\nDoanh thu iPOS: ${fmt(m.ipRevenue)}\nKét: lệch ${fmt(dC)}\nGiao ca sau: ${(b.handover || []).map(h => h.text).join(' · ') || '—'}` });
       }
       case 'approvals': return isHead ? ok(approvals) : err('Chỉ head-barista hoặc chủ quán được làm việc này');
@@ -124,7 +127,12 @@
       case 'deleteNotice':
         NOTICES.splice(b.i, 1);
         return ok({ notices: NOTICES });
+      case 'approvalsDone': return isHead ? ok(approvedDone) : err('Chỉ head-barista hoặc chủ quán được làm việc này');
       case 'approve':
+        if (b.op === 'reopen') { const x = approvedDone.find(a => a.id === b.id); approvedDone = approvedDone.filter(a => a.id !== b.id);
+          if (x) approvals.push({ id: x.id, date: x.date, name: x.name, shift: x.shift, inTime: x.inTime, outTime: x.outTime, flags: x.flags, stage: 'full', selfieIn: null, selfieOut: null, plan: [] });
+          return ok({ status: 'chờ duyệt' }); }
+        { const x = approvals.find(a => a.id === b.id); if (x) approvedDone.unshift({ ...x, status: b.op === 'edit' ? 'đã sửa' : 'đã duyệt', by: b.name, reason: b.reason || '' }); }
         approvals = approvals.filter(a => a.id !== b.id);
         if (b.op === 'edit' && !b.outTime) return ok({ status: 'đã duyệt vào' });
         return ok({ status: b.op === 'edit' ? 'đã sửa' : 'đã duyệt' });

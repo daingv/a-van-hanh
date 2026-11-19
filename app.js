@@ -181,7 +181,7 @@
     ctx.fillStyle = '#fff';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, p, ht - p - fs / 2, w - p * 2);
-    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.72));
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.62));
     if (!blob) throw new Error('Không nén được ảnh');
     return new File([blob], `${label.replace(/[^\p{L}\p{N}]+/gu, '-')}.jpg`, { type: 'image/jpeg' });
   }
@@ -194,7 +194,24 @@
   });
 
   async function upload(file, label) {
-    return (await api('uploadPhoto', { label, data: await toB64(file) })).id;
+    const data = await toB64(file);
+    try { return (await api('uploadPhoto', { label, data })).id; }
+    catch (e) {
+      // mạng chập chờn: tự thử lại một lần
+      await new Promise(r => setTimeout(r, 1200));
+      return (await api('uploadPhoto', { label, data })).id;
+    }
+  }
+
+  // Ảnh tải ngầm: chụp xong điền tiếp, bấm gửi lúc nào cũng được; lúc gửi app đợi nốt ảnh đang tải.
+  const upPending = new Map(); // File → Promise
+  const hasPhoto = s => !!(s && (s.id || (s.file && upPending.has(s.file))));
+  async function waitUploads(store, btn) {
+    const list = Object.values(store).filter(p => p && p.file && !p.id && upPending.has(p.file));
+    if (list.length && btn) btn.replaceChildren(h('span', { class: 'spin' }), `đang tải nốt ${list.length} ảnh…`);
+    await Promise.allSettled(list.map(p => upPending.get(p.file)));
+    const failed = Object.values(store).filter(p => p && p.file && !p.id);
+    if (failed.length) throw new Error(`Ảnh ${failed.map(p => p.label || '').filter(Boolean).join(', ') || ''} chưa tải lên được. Chạm vào ô ảnh để chụp lại.`);
   }
 
   /**
@@ -230,13 +247,15 @@
       setState('load');
       store[key] = { file, id: null, label };
       opts.onChange && opts.onChange();
+      const p = upload(file, label);
+      upPending.set(file, p);
       try {
-        const id = await upload(file, label);
+        const id = await p;
         if (store[key] && store[key].file === file) { store[key].id = id; setState('ok'); }
       } catch (e) {
         setState('err');
         toast(e.message, true);
-      }
+      } finally { upPending.delete(file); }
       opts.onChange && opts.onChange();
     }
     // chọn ảnh có sẵn trong album (không có capture: iPhone mở Thư viện ảnh)
@@ -245,11 +264,13 @@
       const f = inp.files && inp.files[0];
       inp.value = '';
       if (!f) return;
+      // hiện ảnh vừa chụp ngay, nén và tải ngầm phía sau
+      show(f); setState('load');
       try {
         const small = await compress(f, label, opts.selfie ? 640 : 1080);
         show(small);
         await doUpload(small);
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { if (!store[key] || !store[key].file) setState('err'); toast(e.message, true); }
     };
     input.addEventListener('change', onPick(input));
     lib.addEventListener('change', onPick(lib));
@@ -286,6 +307,69 @@
   const editable = el => el && el.closest && el.closest('input, textarea, [contenteditable="true"]');
   document.addEventListener('contextmenu', e => { if (!editable(e.target)) e.preventDefault(); });
   document.addEventListener('selectstart', e => { if (!editable(e.target)) e.preventDefault(); });
+
+  // ---------- kéo trang xuống để tải lại ----------
+  // Ở đầu trang, kéo xuống quá 70px rồi thả: tải lại dữ liệu của trang đang xem (trang chính, lịch tuần, duyệt công).
+  // Trang đang điền báo cáo không kéo tải lại (tránh mất ảnh đang tải).
+  let reloadView = null;
+  const pullable = fn => { reloadView = fn; };
+  (function pullToRefresh() {
+    const MAX = 110, TRIGGER = 70;
+    const ind = h('div', { class: 'ptr', 'aria-hidden': 'true' }, h('i'));
+    document.body.append(ind);
+    let p = null, busy = false;
+    const setPull = d => {
+      ind.style.transform = 'translate(-50%, ' + (d - 44) + 'px) rotate(' + (d * 3) + 'deg)';
+      ind.style.opacity = String(Math.min(1, d / TRIGGER));
+      ind.classList.toggle('ready', d >= TRIGGER);
+      $app.style.transform = d ? 'translateY(' + d * 0.5 + 'px)' : '';
+    };
+    const end = (animate) => {
+      ind.style.transition = $app.style.transition = animate ? 'transform .3s cubic-bezier(.2,.8,.2,1), opacity .3s' : '';
+      setPull(0);
+      setTimeout(() => { ind.style.transition = $app.style.transition = ''; }, 320);
+    };
+    document.addEventListener('touchstart', e => {
+      p = null;
+      if (busy || !reloadView || e.touches.length !== 1 || window.scrollY > 0 || editable(e.target)) return;
+      if (e.touches[0].clientX <= 28) return; // mép trái là vuốt quay lại
+      p = { y0: e.touches[0].clientY, x0: e.touches[0].clientX, d: 0, on: false };
+    }, { passive: true });
+    document.addEventListener('touchmove', e => {
+      if (!p) return;
+      const t = e.touches[0], dy = t.clientY - p.y0, dx = t.clientX - p.x0;
+      if (!p.on) {
+        if (Math.abs(dy) < 8 && Math.abs(dx) < 8) return;
+        if (dy <= 0 || Math.abs(dx) > Math.abs(dy) || window.scrollY > 0) { p = null; return; }
+        p.on = true;
+      }
+      e.preventDefault();
+      // càng kéo càng nặng tay
+      p.d = Math.min(MAX, dy * 0.55);
+      setPull(p.d);
+    }, { passive: false });
+    const release = async () => {
+      if (!p || !p.on) { p = null; return; }
+      const go = p.d >= TRIGGER;
+      p = null;
+      if (!go || !reloadView) { end(true); return; }
+      busy = true;
+      ind.classList.add('spinning');
+      ind.style.transition = $app.style.transition = 'transform .2s ease-out';
+      ind.style.transform = 'translate(-50%, 16px)'; $app.style.transform = 'translateY(36px)';
+      const fn = reloadView;
+      try {
+        loaded.keys.clear(); // lần này hỏi máy chủ bản mới hết
+        await fn();
+        if (navigator.vibrate) navigator.vibrate(8);
+      } catch (e) { toast(e.message || 'Chưa tải lại được', true); }
+      ind.classList.remove('spinning');
+      busy = false;
+      end(true);
+    };
+    document.addEventListener('touchend', release, { passive: true });
+    document.addEventListener('touchcancel', release, { passive: true });
+  })();
 
   // ---------- vuốt từ mép trái để quay lại ----------
   // Bắt đầu trong 28px sát mép trái, kéo sang phải: trang đi theo ngón tay 1:1.
@@ -387,6 +471,7 @@
   const scrollMemo = {};
   let gestureNav = false;
   function render(...nodes) {
+    reloadView = null;
     const kids = nodes.flat(Infinity).filter(n => n !== null && n !== undefined && n !== false);
     const before = titleOf($app), had = $app.childElementCount > 0;
     const probe = document.createElement('div'); probe.append(...kids.map(k => typeof k === 'string' ? document.createTextNode(k) : k));
@@ -716,16 +801,16 @@
       photo() ? pbtn('close', 'Bỏ ảnh', () => slot.clear(), 'plain') : '');
     const check = () => {
       const lack = [!F.tag && 'chủ đề', !title.value.trim() && 'tiêu đề'].filter(Boolean);
-      const uploading = photo() && photo().file && !photo().id;
       if (slot) drawPick();
-      missing.textContent = lack.length ? 'còn thiếu: ' + lack.join(', ') : uploading ? 'đang tải ảnh…' : '';
-      submit.disabled = lack.length > 0 || !!uploading;
+      missing.textContent = lack.length ? 'còn thiếu: ' + lack.join(', ') : '';
+      submit.disabled = lack.length > 0;
     };
     title.addEventListener('input', check);
     const submit = h('button', { class: 'btn', onclick: async () => {
       submit.disabled = true;
-      submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
       try {
+        await waitUploads(F.photos, submit);
+        submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
         const r = await api('postNotice', { tag: F.tag, title: title.value, body: body.value, photo: photo() && photo().id || '' });
         setNotices(r.notices);
         toast('Đã gửi thông báo cho cả quán');
@@ -870,8 +955,9 @@
     const panel = h('div', null, summaryPanel(i.summary));
     const resend = h('div');
     const resendItem = h('li', { hidden: true });
-    loadShare().then(rec => {
+    Promise.all([loadShare(), loadSentClosing()]).then(([rec, sent]) => {
       if (!rec || !alive(resend)) return;
+      if (sent && /chốt ca/.test(rec.title)) rec.closing = sent;
       const open = () => viewShare(rec.r, rec.files || [], rec);
       const left = [!rec.sent.text ? 'tin' : '', !rec.sent.photos && (rec.files || []).length ? 'ảnh' : ''].filter(Boolean);
       if (left.length) {
@@ -880,7 +966,7 @@
           h('button', { class: 'btn', style: 'margin-top:10px', onclick: open }, 'Mở lại để gửi')));
       }
       resendItem.hidden = false;
-      resendItem.replaceChildren(h('button', { onclick: open }, 'Gửi lại báo cáo gần nhất vào Zalo'));
+      resendItem.replaceChildren(h('button', { onclick: open }, rec.closing ? 'Gửi lại hoặc sửa báo cáo gần nhất' : 'Gửi lại báo cáo gần nhất vào Zalo'));
     });
     // lấy số mới nhất mỗi lần về trang chủ (sau khi chấm công, gửi báo cáo…), không chặn màn hình
     if (i.summary && isLoaded('summary')) setTimeout(prefetchWeek, 300);
@@ -913,6 +999,11 @@
       ),
       h('ul', { class: 'menu' },
         item('Đăng xuất', logout)));
+    pullable(async () => {
+      const [sm] = await Promise.all([fresh('summary', {}, 'summary'), refreshInfo().catch(() => null)]);
+      S.info.summary = sm; S.info.summaryAt = Date.now(); markLoaded('summary');
+      viewHome('same');
+    });
   }
 
   // ---------- lịch tuần ----------
@@ -921,6 +1012,7 @@
       h('button', { type: 'button', class: k === week ? 'on' : '', onclick: () => k !== week && viewWeek(k) }, t)));
     const body = h('div', null, spinner('Đang tải lịch…'));
     render(back(), h('h2', { class: 'title', text: 'Lịch tuần' }), seg, h('div', { style: 'height:14px' }), body);
+    pullable(() => viewWeek(week));
     const k = 'week' + week, had = memo.get(k, 12 * 3600e3);
     let first = true;
     const draw = data => { if (alive(body)) { drawWeek(data, first); first = false; } };
@@ -1014,12 +1106,13 @@
     let sending = false;
     const slot = photoSlot(store, 'selfie', 'selfie ' + verb.toLowerCase(), { selfie: true, wide: true, required: true, onChange: () => {
       const s = store.selfie;
-      btn.disabled = !(s && s.id) || sending;
+      btn.disabled = !hasPhoto(s) || sending;
     } });
     const btn = h('button', { class: 'btn', disabled: true, onclick: async () => {
       sending = true; btn.disabled = true;
-      btn.replaceChildren(h('span', { class: 'spin' }), 'đang lấy vị trí và gửi…');
       try {
+        await waitUploads(store, btn);
+        btn.replaceChildren(h('span', { class: 'spin' }), 'đang lấy vị trí và gửi…');
         const loc = await locP;
         const r = await api('clock', { type, selfieId: store.selfie.id, loc });
         await refreshInfo().catch(() => {});
@@ -1105,11 +1198,12 @@
     const store = {};
     const missing = h('p', { class: 'missing' });
     const submit = h('button', { class: 'btn', onclick: async () => {
-      const d = completedTasks([t], store)[0];
-      if (!d) return;
       submit.disabled = true;
-      submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
       try {
+        await waitUploads(store, submit);
+        const d = completedTasks([t], store)[0];
+        if (!d) throw new Error('Chụp ảnh kết quả hoặc ghi lý do không làm');
+        submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
         await api('completeTask', d);
         const ph = store['task:' + t.id];
         await rememberDone({ id: t.id, text: t.text, skip: d.skip || '', file: !d.skip && ph ? ph.file : null, at: Date.now() });
@@ -1119,10 +1213,9 @@
       } catch (e) { toast(e.message, true); submit.textContent = 'Báo đã xong'; check(); }
     } }, 'Báo đã xong');
     const check = () => {
-      const ok = completedTasks([t], store).length > 0;
-      const up = Object.values(store).some(p => p && p.file && !p.id);
-      submit.disabled = !ok || up;
-      missing.textContent = up ? 'đang tải ảnh…' : ok ? '' : skipLacking([t], store).length
+      const ok = completedTasks([t], store).length > 0 || hasPhoto(store['task:' + t.id]);
+      submit.disabled = !ok;
+      missing.textContent = ok ? '' : skipLacking([t], store).length
         ? 'ghi lý do không làm (ít nhất vài chữ)' : 'chụp ảnh kết quả, hoặc bấm "không làm việc này" và ghi lý do';
     };
     render(back(), h('h2', { class: 'title', text: 'Báo việc đã làm' }),
@@ -1145,17 +1238,17 @@
     const bar = draftBar(() => DB.set(key, { photos: store, note: note.value }));
     const save = () => DB.set(key, { photos: store, note: note.value }).then(r => { if (r !== undefined) bar.mark(); return r; });
     const check = () => {
-      const lack = areas.filter(a => !(store[a] && store[a].id)).map(a => 'ảnh ' + a);
-      const uploading = Object.values(store).some(p => p.file && !p.id);
-      missing.textContent = lack.length ? `còn thiếu ${lack.length} mục: ${lack.join(', ')}` : uploading ? 'đang tải ảnh…' : '';
-      submit.disabled = lack.length > 0 || uploading;
+      const lack = areas.filter(a => !hasPhoto(store[a])).map(a => 'ảnh ' + a);
+      missing.textContent = lack.length ? `còn thiếu ${lack.length} mục: ${lack.join(', ')}` : '';
+      submit.disabled = lack.length > 0;
       save();
     };
     note.addEventListener('input', save);
     const submit = h('button', { class: 'btn', onclick: async () => {
       submit.disabled = true;
-      submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
       try {
+        await waitUploads(store, submit);
+        submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
         const photos = Object.fromEntries(areas.map(a => [a, store[a].id]));
         const r = await api('submitOpening', { photos, completed: [], note: note.value });
         const files = areas.filter(a => store[a] && store[a].file).map(a => store[a].file);
@@ -1176,17 +1269,45 @@
   }
 
   // ---------- báo cáo chốt ca ----------
-  async function viewClosing() {
-    if (!memo.get('tasks', 14 * 3600e3)) render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }), spinner('Đang tải…'));
+  // Bản chốt ca vừa gửi (giữ trên máy 24 giờ) để sửa lại và gửi lại.
+  const sentKey = () => 'sent-closing:' + S.name;
+  async function loadSentClosing() {
+    const rec = await DB.get(sentKey());
+    return rec && rec.id && Date.now() - rec.at < 24 * 3600e3 ? rec : null;
+  }
+  const editClosing = rec => viewClosing({ editOf: rec.id, rec });
+  // Ai chốt mốc nào hôm nay (theo lịch). Không tới lượt thì báo, không mở form.
+  async function closingGate() {
+    const plan = (S.info.summary && S.info.summary.today && S.info.summary.today.closing) || [];
+    if (!plan.length || S.info.role === 'chủ quán') return false;
+    const mine = plan.filter(p => (p.names || []).includes(S.name));
+    if (mine.length && mine.some(p => !p.by)) return false;
+    const sent = await loadSentClosing();
+    const rows = plan.map(p => h('li', { class: 'cplan' + (p.names.includes(S.name) ? ' me' : '') },
+      h('b', { text: p.at }), h('span', { text: p.names.map(firstName).join(', ') + (p.keeperSet ? ' · giữ két' : '') }),
+      h('small', { text: p.by ? 'đã chốt' : 'chưa chốt' })));
+    render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }),
+      h('p', { class: 'sub', text: mine.length ? 'Mốc chốt của bạn hôm nay đã có báo cáo.' : 'Hôm nay bạn không phải chốt ca. Báo cáo chốt ca do người giữ két theo lịch gửi.' }),
+      h('ul', { class: 'card cplans' }, rows),
+      sent ? h('button', { class: 'btn', onclick: () => editClosing(sent) }, 'Sửa báo cáo chốt ca đã gửi') : null,
+      h('p', { class: 'hint', text: 'Lịch giữ két do người xếp lịch đánh dấu * trong lịch ca. Không ai được đánh dấu thì người hết ca đúng mốc chốt.' }));
+    return true;
+  }
+
+  async function viewClosing(opt) {
+    const ed = opt && opt.editOf ? opt : null;
+    if (!ed && await closingGate()) return;
+    if (!ed && !memo.get('tasks', 14 * 3600e3)) render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }), spinner('Đang tải…'));
     let tasks = [];
-    tasks = await getTasks();
-    const earlier = await loadDone();
+    // sửa: việc bàn giao đã báo xong giữ nguyên ở máy chủ, không báo lại
+    tasks = ed ? [] : await getTasks();
+    const earlier = ed ? [] : await loadDone();
     const c = S.info.cfg;
-    const shift = shiftNameNow();
+    const shift = ed ? ed.rec.shift || shiftNameNow() : shiftNameNow();
     const evening = shift === 'tối';
     const items = c.stock.filter(s => s.scope === 'cả hai' || (evening ? s.scope === 'tối' : s.scope === 'ngày'));
-    const key = draftKey('chot-ca');
-    const saved = (await DB.get(key)) || {};
+    const key = ed ? 'edit-closing:' + ed.editOf : draftKey('chot-ca');
+    const saved = (await DB.get(key)) || (ed ? { F: JSON.parse(JSON.stringify(ed.rec.F || {})), photos: Object.assign({}, ed.rec.photos) } : {});
     const F = Object.assign({ money: {}, explains: [], reason: '', stock: {}, discards: [], others: [], handover: [{ text: '', to: [] }], incident: '', note: '' }, saved.F || {});
     if (!Array.isArray(F.discards)) F.discards = [];
     const store = saved.photos || {};
@@ -1445,7 +1566,7 @@
       if (F.explains.some(e => String(e.raw || '').trim() && !e.unknown && !String(e.reason || '').trim())) out.push('lý do của giải trình');
       if (cc && cc.uC) out.push('giải trình tiền mặt (còn ' + diffText(cc.uC) + ')');
       if (cc && cc.uB) out.push('giải trình chuyển khoản (còn ' + diffText(cc.uB) + ')');
-      moneyPhotos.concat(c.areas).forEach(a => { if (!(store[a] && store[a].id)) out.push('ảnh ' + a); });
+      moneyPhotos.concat(c.areas).forEach(a => { if (!hasPhoto(store[a])) out.push('ảnh ' + a); });
       items.forEach(it => { if (F.stock[it.name].left === '') out.push('tồn ' + it.name); });
       evItems.forEach(it => { if (!String(F.evening[it.name] || '').length || F.evening[it.name] === '.') out.push(it.name); });
       F.discards.filter(huyStarted).forEach(d => {
@@ -1487,16 +1608,16 @@
       const need = cc && cc.needReason;
       reasonWrap.replaceChildren(...(need ? [h('label', { class: 'f', text: 'Lý do lệch (bắt buộc vì vẫn lệch quá ' + money(c.th.note) + ')' }), reason] : []));
       const lack = lacking();
-      const uploading = Object.values(store).some(p => p.file && !p.id);
-      missing.replaceChildren(...(lack.length ? [h('div', { text: `Còn thiếu ${lack.length} mục:` }), h('div', { text: lack.join(' · ') })] : uploading ? ['đang tải ảnh…'] : []));
-      submit.disabled = lack.length > 0 || uploading;
+      missing.replaceChildren(...(lack.length ? [h('div', { text: `Còn thiếu ${lack.length} mục:` }), h('div', { text: lack.join(' · ') })] : []));
+      submit.disabled = lack.length > 0;
       save();
     }
 
     async function send() {
       submit.disabled = true;
-      submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
       try {
+        await waitUploads(store, submit);
+        submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
         const photos = {};
         moneyPhotos.concat(['phiếu chi'], c.areas).forEach(a => { if (store[a] && store[a].id) photos[a] = store[a].id; });
         const payload = {
@@ -1507,20 +1628,24 @@
           eveningUnits: Object.fromEntries(evItems.map(it => [it.name, F.evUnit[it.name] || (it.unit === 'g' ? 'g' : 'ml')])),
           stock: Object.fromEntries(items.map(it => [it.name, { unit: F.stock[it.name].unit || 'ml', left: F.stock[it.name].left, refill: evening && F.stock[it.name].on ? F.stock[it.name].refill : '' }])),
           evening: Object.fromEntries(evItems.map(it => [it.name, F.evening[it.name]])),
-          completed: completedTasks(tasks, store),
+          completed: ed ? [] : completedTasks(tasks, store),
           discards: F.discards.filter(huyStarted).map(d => ({ kind: d.kind, name: d.name, qty: d.qty, unit: d.kind === 'ccdc' ? 'cái' : (d.unit || 'ml'),
             reason: d.reason, photoId: store[d.k] && store[d.k].id || '' })),
           others: F.others.filter(o => o.text.trim()).map(o => ({ text: o.text, photoId: store[o.k] && store[o.k].id })),
           handover: F.handover.filter(t => t.text.trim()).map(t => ({ text: t.text, to: t.to || [] })),
           incident: F.incident, note: F.note,
         };
+        if (ed) payload.editOf = ed.editOf;
         const r = await api('submitClosing', payload);
+        // giữ bản vừa gửi trên máy để sửa lại được (24 giờ)
+        await DB.set(sentKey(), { id: r.id, at: ed ? ed.rec.at : Date.now(), shift, F: JSON.parse(JSON.stringify(F)), photos: store });
         const files = Object.entries(store).filter(([k, v]) => v.id && v.file && !NO_ZALO.includes(k)).map(([, v]) => v.file)
           .concat(earlier.filter(x => x.file).map(x => x.file));
         await DB.del(key);
         await DB.del(doneKey());
         S.info.pendingTasks = Math.max(0, S.info.pendingTasks - payload.completed.length);
-        await saveShare(r, files, 'báo cáo chốt ca');
+        await saveShare(r, files, ed ? 'báo cáo chốt ca (bản sửa)' : 'báo cáo chốt ca');
+        if (S.info.summary && S.info.summary.today) delete S.info.summary.today.closing;
         viewShare(r, files);
       } catch (e) {
         toast(e.message, true);
@@ -1529,8 +1654,9 @@
       }
     }
 
-    render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }),
-      h('p', { class: 'sub', text: `Ca ${shift} · ${hm(now())}${saved.F ? ' · đã khôi phục bản nháp' : ''}` }),
+    render(back(), h('h2', { class: 'title', text: ed ? 'Sửa báo cáo chốt ca' : 'Báo cáo chốt ca' }),
+      h('p', { class: 'sub', text: ed ? `Bản gửi lúc ${hm(new Date(ed.rec.at))}. Sửa xong bấm gửi: bản trên Sheet được thay, tin Zalo ghi rõ là bản sửa.`
+        : `Ca ${shift} · ${hm(now())}${saved.F ? ' · đã khôi phục bản nháp' : ''}` }),
       h('h3', { text: 'Tiền theo iPOS' }),
       moneyField('ipRevenue', 'Tổng doanh thu'), moneyField('ipCash', 'Tiền mặt'), moneyField('ipBank', 'Chuyển khoản'),
       h('h3', { text: 'Tiền thực tế' }),
@@ -1654,6 +1780,7 @@
       h('pre', { class: 'msg', text: r.zaloText }),
       b1, b2, batches,
       h('p', { class: 'hint', text: 'Gửi tin trước, quay lại app này rồi bấm gửi ảnh. Chọn đúng nhóm ở cả hai bước.' }),
+      again && again.closing ? h('button', { class: 'btn ghost', onclick: () => editClosing(again.closing) }, 'Sửa báo cáo chốt ca') : null,
       h('button', { class: 'btn ghost', onclick: viewHome }, 'Xong, về trang chính'));
   }
 
@@ -1758,9 +1885,37 @@
         form].filter(Boolean));
       return el;
     };
+    // đã duyệt / sửa trong 3 ngày: lỡ tay thì mở lại để duyệt lần nữa
+    const doneWrap = h('div');
+    const ST = { 'đã duyệt': 'Đã duyệt', 'đã sửa': 'Đã sửa giờ', 'đã duyệt vào': 'Đã duyệt giờ vào' };
+    const doneRow = d => {
+      const tIn = d.inTime ? hm(new Date(d.inTime)) : '—', tOut = d.outTime ? hm(new Date(d.outTime)) : '—';
+      const btn = h('button', { type: 'button', class: 'chip sm' }, 'Mở lại');
+      btn.addEventListener('click', async () => {
+        if (btn.dataset.sure !== '1') { btn.dataset.sure = '1'; btn.textContent = 'Bấm lần nữa để mở lại'; btn.classList.add('on'); return; }
+        btn.disabled = true;
+        try {
+          await api('approve', { id: d.id, op: 'reopen' });
+          toast(d.status === 'đã sửa' ? 'Đã mở lại, giờ quay về giờ chấm gốc' : 'Đã mở lại để duyệt lần nữa');
+          viewApprovals();
+        } catch (e) { toast(e.message, true); btn.disabled = false; }
+      });
+      return h('li', { class: 'drow' },
+        h('div', null, h('strong', { text: d.name }), h('span', { class: 'asub', text: `${dayLabel(d.date)} · ${tIn}–${tOut}` }),
+          h('span', { class: 'asub', text: `${ST[d.status] || d.status} · ${firstName(d.by)}${d.reason ? ' · ' + d.reason : ''}` })),
+        btn);
+    };
+    const loadDoneList = () => api('approvalsDone').then(ds => {
+      if (!alive(doneWrap)) return;
+      doneWrap.replaceChildren(...(ds.length ? [h('h3', { text: 'Đã duyệt gần đây' }),
+        h('p', { class: 'hint', text: 'Lỡ duyệt sai thì bấm Mở lại: lượt đó quay về chờ duyệt, giờ đã sửa trả về giờ chấm gốc.' }),
+        h('ul', { class: 'card dlist' }, ds.map(doneRow))] : []));
+    }).catch(() => {});
     render(back(), h('h2', { class: 'title', text: 'Duyệt công' }),
       h('p', { class: 'sub', text: list.length ? `${list.length} lượt cần xem. Lượt bình thường đã tự duyệt.` : 'Không có lượt nào cần duyệt.' }),
-      list.map(card));
+      list.map(card), doneWrap);
+    loadDoneList();
+    pullable(() => viewApprovals());
   }
 
   // ---------- khởi động ----------
