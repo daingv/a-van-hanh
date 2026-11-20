@@ -4,10 +4,14 @@
   const staff = { 'Đoàn Hạnh Nguyên': 'head-barista', 'Nguyễn Trâm Anh': 'barista', 'Hoàng Ngọc Tú': 'barista' };
   const cfg = {
     areas: ['Mặt quầy pha chế', 'Quầy thu ngân', 'Back bar', 'Gầm cầu thang', 'Sàn nhà vệ sinh', 'Đồ dùng cho khách trong nhà vệ sinh', 'Sân trước'],
-    stock: ['Kem matcha', 'Kem mè đen', 'Sữa hạt dẻ cười', 'Sốt đào xay', 'Nước ép dưa lưới'].map(n => ({ name: n, unit: '', scope: 'cả hai' })),
+    stock: ['Kem matcha', 'Kem mè đen', 'Sữa hạt dẻ cười', 'Sốt đào xay', 'Nước ép dưa lưới'].map((n, i) => ({ name: n, unit: ['ml', 'ml', 'ml', 'g', 'chai'][i], scope: 'cả hai' })),
     evening: [{ name: 'Bột matcha', group: 'trà', unit: 'g' }, { name: 'Bột hojicha', group: 'trà', unit: 'g' },
       { name: 'Trà ủ lạnh', group: 'nguyên liệu pha chế', unit: 'ml' }, { name: 'Sữa tươi', group: 'nguyên liệu pha chế', unit: 'ml' }],
-    th: { note: 20000, comp: 100000, alert: 200000 }, aft: '15:00', eve: '20:00', openFrom: '07:00', openTo: '10:30'
+    th: { note: 20000, comp: 100000, alert: 200000 }, aft: '14:30', eve: '20:00', openFrom: '07:00', openTo: '10:30',
+    units: ['ml', 'g', 'chai'],
+    shelf: [{ name: 'Sữa tươi', life: '3 ngày sau khi mở', note: 'ngăn mát 2–4°C, đóng nắp' }, { name: 'Trà ủ lạnh', life: '24 giờ', note: 'ngăn mát, ghi giờ ủ lên bình' },
+      { name: 'Kem matcha', life: '2 ngày', note: 'ngăn mát' }, { name: 'Đường nước', life: '7 ngày', note: 'nhiệt độ phòng, bình kín' }],
+    expenseGroups: ['Nguyên liệu', 'Đá', 'Vật dụng / đồ dùng', 'Ship / vận chuyển', 'Sửa chữa / bảo trì', 'Điện nước / dịch vụ', 'Khác']
   };
   let open = {};
   let tasks = [{ id: 't1', text: 'nấu 2 nồi trân châu', from: 'Hoàng Ngọc Tú', at: Date.now() - 3 * 3600e3, to: ['Nguyễn Trâm Anh', 'Đoàn Hạnh Nguyên'] },
@@ -41,8 +45,9 @@
         items: [{ text: 'chấm vào', act: 'clock', done: inNow }, { text: 'báo cáo đầu ca', act: 'opening', note: cfg.openFrom + '–' + cfg.openTo, done: true },
           ...tasks.filter(t => !t.to.length || t.to.includes(name)).map(t => ({ ...t, note: 'bàn giao từ ' + t.from.split(' ').pop(), done: false, act: 'task' })),
           ...doneTasks.map(t => ({ text: t.text, note: 'bàn giao từ ' + t.from.split(' ').pop(), done: true })),
-          { text: 'báo cáo chốt ca', act: 'closing', note: 'người giữ két · khoảng 15:30', done: false }, { text: 'chấm ra', act: 'clock', done: false }],
-        closing: [{ at: '16:00', names: ['Đoàn Hạnh Nguyên'], keeperSet: true, by: '' }, { at: '23:00', names: ['Hoàng Ngọc Tú'], keeperSet: false, by: '' }] },
+          { text: 'báo cáo chốt ca chiều', act: 'closing', slot: 1, note: closed[1].by ? 'đã chốt bởi ' + closed[1].by.split(' ').pop() : '14:30–20:00 · ai trong ca chốt cũng được', done: !!closed[1].by }, { text: 'chấm ra', act: 'clock', done: false }],
+        closing: [
+          ...CLOSE_PLAN.map((p, i) => ({ ...p, idx: i, from: CLOSE_FROM[i], to: CLOSE_TO[i], by: closed[i].by, byAt: closed[i].at, now: slotNow() === i }))] },
       next: { ...blk(1, 15, 23, 'C+T'), keeper: !isHead },
       month: { label: 'tháng ' + (new Date().getMonth() + 1), recap: new Date().getDate() === 1, days: 14, minutes: 6420, nightMinutes: 95,
         late: 2, lateMin: 17, early: 0, earlyMin: 0, forgot: 1, pending: 0 },
@@ -57,6 +62,15 @@
   };
 
   let NOTICES = null;
+  // 3 ca chốt mỗi ngày (phút tính từ 0h; ca tối kéo tới 6h sáng hôm sau)
+  const CLOSE_FROM = [360, 870, 1200], CLOSE_TO = [870, 1200, 1800];
+  const CLOSE_PLAN = [
+    { key: 'sáng', label: 'ca sáng', window: 'trước 14:30', names: ['Hoàng Ngọc Tú'] },
+    { key: 'chiều', label: 'ca chiều', window: '14:30–20:00', names: ['Đoàn Hạnh Nguyên', 'Nguyễn Trâm Anh'] },
+    { key: 'tối', label: 'ca tối', window: 'từ 20:00', names: ['Hoàng Ngọc Tú'] }];
+  const slotNow = () => { let m = new Date().getHours() * 60 + new Date().getMinutes(); if (m < 360) m += 1440; return m < 870 ? 0 : m < 1200 ? 1 : 2; };
+  const closed = [{ by: '', at: null }, { by: '', at: null }, { by: '', at: null }];
+  if (slotNow() > 0) closed[0] = { by: 'Hoàng Ngọc Tú', at: at0(13, 5) };
   window.MOCK_API = async (b) => {
     await wait(b.action === 'uploadPhoto' ? 500 : 300);
     if (b.action === 'staffList') return ok(Object.keys(staff));
@@ -115,7 +129,13 @@
         return ok({ id: 'r' + n, zaloText: `(á) · Đầu ca sáng · (thử)\nMở quầy: ${b.name}\n[${Object.keys(b.photos).length} ảnh]` });
       case 'submitClosing': {
         const m = b.money;
-        const dC = m.cash - (m.opening || 0) - m.ipCash;
+        const sp = (b.expenses || []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
+        const dC = m.cash - (m.opening || 0) - m.ipCash + sp;
+        const miss = (b.expenses || []).find(x => !x.photoId);
+        if (miss) return err('Chụp phiếu chi cho khoản "' + miss.name + '"');
+        const sl = b.slot === undefined ? slotNow() : b.slot;
+        if (!b.editOf && closed[sl].by) return err('Chốt ' + CLOSE_PLAN[sl].label + ' (' + CLOSE_PLAN[sl].window + ') đã có báo cáo của ' + closed[sl].by + '. Mỗi ca chỉ chốt một lần.');
+        if (!b.editOf) closed[sl] = { by: b.name, at: Date.now() };
         return ok({ id: b.editOf || 'r' + n, edited: !!b.editOf, alert: dC < -200000, compEach: 0, flags: [], people: [b.name],
           zaloText: `(á) · Chốt ca (thử)\nGiữ ca: ${b.name}\nDoanh thu iPOS: ${fmt(m.ipRevenue)}\nKét: lệch ${fmt(dC)}\nGiao ca sau: ${(b.handover || []).map(h => h.text).join(' · ') || '—'}` });
       }

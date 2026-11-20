@@ -3,7 +3,9 @@
   'use strict';
   const CFG = window.APP_CONFIG || {};
   const MOCK = !CFG.API_URL;
-  const IDLE_MS = 10 * 60 * 1000;
+  // tự đăng xuất khi để máy không dùng: 10 phút ở các màn thường, 40 phút khi đang điền báo cáo (bản nháp vẫn lưu trên máy);
+  // đang tải ảnh lên thì đợi tải xong mới tính
+  const IDLE_MIN = 10, IDLE_FORM_MIN = 40;
   const NO_ZALO = []; // ảnh chỉ lưu Drive, không gửi vào nhóm Zalo
 
   const S = { name: null, pin: null, info: null, offset: 0 };
@@ -105,9 +107,22 @@
   }
   const diffText = n => (!n ? 'khớp' : (n < 0 ? 'thiếu ' : 'thừa ') + money(Math.abs(n)));
   const hmToMin = s => { const p = String(s).split(':'); return +p[0] * 60 + +(p[1] || 0); };
-  function shiftNameNow() {
-    const c = S.info.cfg, m = now().getHours() * 60 + now().getMinutes();
-    return m < hmToMin(c.aft) ? 'sáng' : m < hmToMin(c.eve) ? 'chiều' : 'tối';
+  /**
+   * Ca đang chốt: theo giờ, từ 0h tới 6h sáng vẫn là ca tối (của ngày hôm trước).
+   * Người ca trước chưa chốt mà mở báo cáo trễ sau mốc (tối đa 90 phút) thì vẫn chốt ca của mình.
+   */
+  const CLOSING_LATE_MIN = 90, CLOSING_KEYS = ['sáng', 'chiều', 'tối'];
+  function closingTarget() {
+    const c = S.info.cfg, d = now();
+    let m = d.getHours() * 60 + d.getMinutes();
+    const night = m < 360;
+    if (night) m += 1440;
+    let idx = m < hmToMin(c.aft) ? 0 : m < hmToMin(c.eve) ? 1 : 2;
+    const plan = (S.info.summary && S.info.summary.today && S.info.summary.today.closing) || [];
+    const prev = plan[idx - 1];
+    if (!night && prev && !prev.by && (prev.names || []).includes(S.name) && typeof prev.to === 'number' &&
+      m >= prev.to && m - prev.to <= CLOSING_LATE_MIN) idx--;
+    return { idx, key: CLOSING_KEYS[idx], p: plan[idx] || null, late: idx < (m < hmToMin(c.aft) ? 0 : m < hmToMin(c.eve) ? 1 : 2) };
   }
 
   // ---------- nháp (IndexedDB) ----------
@@ -132,9 +147,28 @@
         });
       } catch (e) { return undefined; }
     };
+    // iPhone hay lỗi khi cất thẳng ảnh (File) vào IndexedDB ("Error preparing Blob/File data"), và ảnh cất được
+    // cũng có thể hỏng sau khi tắt app. Nên ảnh được cất dạng byte, đọc ra thì dựng lại File mới.
+    const packed = new WeakMap();
+    const plain = v => v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+    const pack = async v => {
+      if (v instanceof Blob) {
+        if (!packed.has(v)) packed.set(v, v.arrayBuffer().then(buf => ({ __blob: 1, name: v.name || '', type: v.type || '', buf }), () => null));
+        return packed.get(v);
+      }
+      if (Array.isArray(v)) return Promise.all(v.map(pack));
+      if (plain(v)) { const o = {}; for (const k of Object.keys(v)) o[k] = await pack(v[k]); return o; }
+      return v;
+    };
+    const unpack = v => {
+      if (Array.isArray(v)) return v.map(unpack);
+      if (plain(v) && v.__blob) return new File([v.buf], v.name || 'anh.jpg', { type: v.type || 'image/jpeg' });
+      if (plain(v)) { const o = {}; for (const k of Object.keys(v)) o[k] = unpack(v[k]); return o; }
+      return v;
+    };
     return {
-      get: k => tx('readonly', s => s.get(k)),
-      set: (k, v) => tx('readwrite', s => s.put(v, k)),
+      get: k => tx('readonly', s => s.get(k)).then(unpack),
+      set: async (k, v) => { const p = await pack(v); return tx('readwrite', s => s.put(p, k)); },
       del: k => tx('readwrite', s => s.delete(k)),
     };
   })();
@@ -295,12 +329,20 @@
   }
 
   // ---------- khung ----------
-  let idleTimer;
-  function bumpIdle() {
+  let idleTimer, lastActive = Date.now();
+  const onForm = () => !!document.querySelector('.draftbar, #app .slot');
+  function idleCheck() {
     clearTimeout(idleTimer);
-    if (S.pin) idleTimer = setTimeout(() => { logout(); toast('Đã tự đăng xuất sau 10 phút không dùng'); }, IDLE_MS);
+    if (!S.pin) return;
+    const lim = (onForm() ? IDLE_FORM_MIN : IDLE_MIN) * 60000, left = lastActive + lim - Date.now();
+    if (left > 0 || upPending.size) { idleTimer = setTimeout(idleCheck, Math.max(left, 30000)); return; }
+    logout();
+    toast(`Đã tự đăng xuất sau ${lim / 60000} phút không dùng${lim > IDLE_MIN * 60000 ? ' (bản nháp vẫn còn, đăng nhập lại là điền tiếp)' : ''}`);
   }
+  function bumpIdle() { lastActive = Date.now(); idleCheck(); }
   ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, bumpIdle, { passive: true }));
+  // iPhone dừng hẹn giờ khi app ở nền: mở lại app thì xét ngay
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) idleCheck(); });
 
   // ---------- không cho phóng to / thu nhỏ màn hình (như app thật) ----------
   // iPhone bỏ qua user-scalable=no trong trang, nên chặn thẳng cử chỉ hai ngón (gesture*) và chạm hai ngón khi kéo.
@@ -630,9 +672,16 @@
   // màn chào: lời chào theo giờ + 1 câu động lực (tab CaiDat cột S:T) + nút Đăng nhập. Không hiện tên nhân viên.
   const QUOTE_FALLBACK = [{ text: 'Ichi-go ichi-e: mỗi lần gặp gỡ chỉ có một lần. Hãy pha từng ly như thể đó là ly duy nhất khách được uống.', by: 'Trà đạo Nhật Bản' }];
   const greeting = () => {
-    const hr = now().getHours();
+    const hr = new Date().getHours();
     return hr >= 4 && hr < 11 ? 'Chào buổi sáng' : hr < 13 ? 'Chào buổi trưa' : hr < 18 ? 'Chào buổi chiều' : 'Chào buổi tối';
   };
+  // màn chào để lâu / mở lại app từ nền (iPhone giữ nguyên trang cũ): cập nhật lời chào theo giờ lúc đang xem
+  let liveGreet = null;
+  const tickGreet = () => { if (liveGreet) liveGreet(); };
+  setInterval(tickGreet, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tickGreet(); });
+  window.addEventListener('pageshow', tickGreet);
+  window.addEventListener('focus', tickGreet);
   const deviceId = () => {
     let id = store.get('a-dev');
     if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()).replace(/[^\w-]/g, ''); store.set('a-dev', id); }
@@ -655,11 +704,13 @@
       topColorOf(src).then(c => { if (c) { welcomeTop = c; syncTheme(); } });
     };
     const firstOpen = !$app.childElementCount; // vừa mở app (không phải bấm Quay lại từ màn PIN)
+    const greetEl = h('h2', { class: 'title', text: greeting() });
+    liveGreet = () => { if (!greetEl.isConnected) return; const g = greeting(); if (greetEl.textContent !== g) greetEl.textContent = g; };
     setBg(bgSaved && bgSaved.data ? bgSaved.data : 'bg-welcome.webp');
     render(h('div', { class: 'welcome has-bg' + (firstOpen ? ' intro' : '') }, bgEl, h('div', { class: 'w-shade', 'aria-hidden': 'true' }),
       h('div', { class: 'w-mark', role: 'img', 'aria-label': '(á)' }),
       h('div', { class: 'w-mid' },
-        h('h2', { class: 'title', text: greeting() }),
+        greetEl,
         h('p', { class: 'w-sub', text: 'Đội hình bạn pha trà' }),
         h('blockquote', { class: 'quote' }, quoteText, quoteBy)),
       h('button', { class: 'btn', onclick: () => viewPin() }, 'Đăng nhập')));
@@ -999,7 +1050,6 @@
     const m = now().getHours() * 60 + now().getMinutes();
     const openWindow = m >= hmToMin(c.openFrom) && m <= hmToMin(c.openTo);
     const item = (label, fn, extra) => h('li', null, h('button', { onclick: fn }, h('span', { class: 'ml' }, label), extra));
-    const soon = h('span', { class: 'soon', text: 'Sắp có' });
     // máy đã cho phép thông báo: âm thầm đăng ký lại (đổi người dùng máy, đổi khoá…), mỗi lần mở app một lần
     if (!pushChecked) { pushChecked = true; setTimeout(() => pushRegister(false).catch(() => {}), 1500); }
     if (!isLoaded('summary')) i.summary = memo.get('summary', 12 * 3600e3) || i.summary;
@@ -1008,7 +1058,13 @@
     const resend = h('div');
     const resendItem = h('li', { hidden: true });
     Promise.all([loadShare(), loadSentClosing()]).then(([rec, sent]) => {
-      if (!rec || !alive(resend)) return;
+      if ((!rec && !sent) || !alive(resend)) return;
+      if (!rec) {
+        // chỉ còn bản chốt ca đã gửi (tin Zalo không lưu được trên máy): vẫn sửa được
+        resendItem.hidden = false;
+        resendItem.replaceChildren(h('button', { onclick: () => editClosing(sent) }, 'Sửa báo cáo chốt ca gần nhất'));
+        return;
+      }
       if (sent && /chốt ca/.test(rec.title)) rec.closing = sent;
       const open = () => viewShare(rec.r, rec.files || [], rec);
       const left = [!rec.sent.text ? 'tin' : '', !rec.sent.photos && (rec.files || []).length ? 'ảnh' : ''].filter(Boolean);
@@ -1038,16 +1094,9 @@
         item('Báo cáo chốt ca', viewClosing),
         item('Lịch tuần', () => viewWeek(0)),
         resendItem,
-        item('Báo phát sinh', () => viewSoon('Báo phát sinh'), soon.cloneNode(true)),
         i.isHead ? item('Duyệt công', viewApprovals, i.pendingApprovals ? h('span', { class: 'count', text: i.pendingApprovals }) : null) : null,
         i.isHead ? item('Gửi thông báo', viewPostNotice) : null,
         pushItem(item),
-      ),
-      h('ul', { class: 'menu' },
-        item('Công thức pha chế', () => viewSoon('Công thức pha chế'), soon.cloneNode(true)),
-        item('Xử lý tình huống khách hàng', () => viewSoon('Xử lý tình huống khách hàng'), soon.cloneNode(true)),
-        item('Tra cứu sự cố', () => viewSoon('Tra cứu sự cố'), soon.cloneNode(true)),
-        item('Danh sách liên hệ', () => viewSoon('Danh sách liên hệ'), soon.cloneNode(true)),
       ),
       h('ul', { class: 'menu' },
         item('Đăng xuất', logout)));
@@ -1131,10 +1180,6 @@
     body.replaceChildren(h('div', { class: 'weekdays' }, cards));
     if (first && todayCard && todayCard !== cards[0]) whenShown(todayCard, () => todayCard.scrollIntoView({ block: 'start' }));
     }
-  }
-
-  function viewSoon(title) {
-    render(back(), h('h2', { class: 'title', text: title }), h('p', { class: 'sub', text: 'Mục này sẽ có ở bước sau.' }));
   }
 
   // ---------- chấm công ----------
@@ -1328,23 +1373,52 @@
     return rec && rec.id && Date.now() - rec.at < 24 * 3600e3 ? rec : null;
   }
   const editClosing = rec => viewClosing({ editOf: rec.id, rec });
-  // Ai chốt mốc nào hôm nay (theo lịch). Không tới lượt thì báo, không mở form.
+  // Mỗi ngày 3 lần chốt (sáng · chiều · tối). Ai cũng chốt được; ca đang tới đã có người chốt thì báo, không mở form.
+  const closingPlanRows = plan => h('ul', { class: 'card cplans' }, plan.map(p => h('li', { class: 'cplan' + (p.now ? ' me' : '') },
+    h('b', { text: cap(p.key || '') }), h('span', { text: (p.names || []).map(firstName).join(', ') || 'chưa xếp lịch' }),
+    h('small', { text: p.by ? 'đã chốt · ' + firstName(p.by) + (p.byAt ? ' ' + hm(new Date(p.byAt)) : '') : p.window || '' }))));
+  const closingRule = () => { const c = S.info.cfg; return `Mỗi ngày 3 lần chốt: ca sáng gửi trước ${c.aft}, ca chiều ${c.aft}–${c.eve}, ca tối từ ${c.eve}. Một người trong ca gửi là cả ca được tính xong.`; };
   async function closingGate() {
     const plan = (S.info.summary && S.info.summary.today && S.info.summary.today.closing) || [];
-    if (!plan.length || S.info.role === 'chủ quán') return false;
-    const mine = plan.filter(p => (p.names || []).includes(S.name));
-    if (mine.length && mine.some(p => !p.by)) return false;
+    const cur = closingTarget().p;
+    if (!cur || !cur.by) return false;
     const sent = await loadSentClosing();
-    const rows = plan.map(p => h('li', { class: 'cplan' + (p.names.includes(S.name) ? ' me' : '') },
-      h('b', { text: p.at }), h('span', { text: p.names.map(firstName).join(', ') + (p.keeperSet ? ' · giữ két' : '') }),
-      h('small', { text: p.by ? 'đã chốt' : 'chưa chốt' })));
+    const mine = cur.by === S.name;
     render(back(), h('h2', { class: 'title', text: 'Báo cáo chốt ca' }),
-      h('p', { class: 'sub', text: mine.length ? 'Mốc chốt của bạn hôm nay đã có báo cáo.' : 'Hôm nay bạn không phải chốt ca. Báo cáo chốt ca do người giữ két theo lịch gửi.' }),
-      h('ul', { class: 'card cplans' }, rows),
-      sent ? h('button', { class: 'btn', onclick: () => editClosing(sent) }, 'Sửa báo cáo chốt ca đã gửi') : null,
-      h('p', { class: 'hint', text: 'Lịch giữ két do người xếp lịch đánh dấu * trong lịch ca. Không ai được đánh dấu thì người hết ca đúng mốc chốt.' }));
+      h('p', { class: 'sub', text: `Chốt ${cur.label} đã có báo cáo của ${mine ? 'bạn' : cur.by}${cur.byAt ? ' lúc ' + hm(new Date(cur.byAt)) : ''}. Mỗi ca chỉ chốt một lần.` }),
+      closingPlanRows(plan),
+      mine && sent ? h('button', { class: 'btn', onclick: () => editClosing(sent) }, 'Sửa báo cáo chốt ca đã gửi') : null,
+      h('p', { class: 'hint', text: closingRule() }));
     return true;
   }
+  // Bảng tra hạn sử dụng (CaiDat cột AF:AH) hiện dạng bảng nổi
+  function openSheet(title, body) {
+    let gone = false;
+    const close = () => {
+      if (gone) return; gone = true;
+      ov.classList.remove('in');
+      document.removeEventListener('keydown', onKey);
+      setTimeout(() => ov.remove(), still() ? 0 : 300);
+    };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    const panel = h('div', { class: 'msheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+      h('div', { class: 'msheet-head' }, h('h3', { text: title }),
+        h('button', { class: 'x', type: 'button', 'aria-label': 'đóng', onclick: close }, ico('close'))),
+      h('div', { class: 'msheet-body' }, body));
+    const ov = h('div', { class: 'mover', onclick: e => { if (e.target === ov) close(); } }, panel);
+    document.body.append(ov);
+    requestAnimationFrame(() => requestAnimationFrame(() => ov.classList.add('in')));
+    document.addEventListener('keydown', onKey);
+    return close;
+  }
+  function showShelf() {
+    const list = (S.info.cfg.shelf || []);
+    openSheet('Bảng tra hạn sử dụng', list.length
+      ? h('ul', { class: 'shelf' }, list.map(x => h('li', null, h('div', { class: 'top' }, h('b', { text: x.name }), h('span', { class: 'life', text: x.life || '' })),
+          x.note ? h('small', { text: x.note }) : null)))
+      : h('p', { class: 'hint', text: 'Chưa có bảng tra. Chủ quán điền ở tab CaiDat, cột AF:AH.' }));
+  }
+  const shelfLink = () => h('button', { type: 'button', class: 'linkbtn shelfbtn', onclick: showShelf }, 'Bảng tra hạn sử dụng');
 
   async function viewClosing(opt) {
     const ed = opt && opt.editOf ? opt : null;
@@ -1355,15 +1429,27 @@
     tasks = ed ? [] : await getTasks();
     const earlier = ed ? [] : await loadDone();
     const c = S.info.cfg;
-    const shift = ed ? ed.rec.shift || shiftNameNow() : shiftNameNow();
+    const target = ed ? null : closingTarget();
+    const shift = ed ? ed.rec.shift || closingTarget().key : target.key;
     const evening = shift === 'tối';
     const items = c.stock.filter(s => s.scope === 'cả hai' || (evening ? s.scope === 'tối' : s.scope === 'ngày'));
     const key = ed ? 'edit-closing:' + ed.editOf : draftKey('chot-ca');
     const saved = (await DB.get(key)) || (ed ? { F: JSON.parse(JSON.stringify(ed.rec.F || {})), photos: Object.assign({}, ed.rec.photos) } : {});
-    const F = Object.assign({ money: {}, explains: [], reason: '', stock: {}, discards: [], others: [], handover: [{ text: '', to: [] }], incident: '', note: '' }, saved.F || {});
+    const F = Object.assign({ money: {}, explains: [], reason: '', stock: {}, discards: [], expenses: [], others: [], handover: [{ text: '', to: [] }], incident: '', note: '' }, saved.F || {});
     if (!Array.isArray(F.discards)) F.discards = [];
+    if (!Array.isArray(F.expenses)) F.expenses = [];
+    // tóm tắt trang chủ có thể cũ: tải lại ngầm, ca này đã có người chốt thì báo ngay trên form
+    const dupWarn = h('div');
+    if (!ed) fresh('summary', {}, 'summary').then(sm => {
+      if (!sm || !alive(dupWarn)) return;
+      S.info.summary = sm; S.info.summaryAt = Date.now();
+      const cur = ((sm.today && sm.today.closing) || [])[target.idx];
+      if (!cur || !cur.by) return;
+      if (cur) dupWarn.replaceChildren(h('div', { class: 'alert bad', style: 'margin-bottom:16px' },
+        `Chốt ${cur.label} đã có báo cáo của ${cur.by === S.name ? 'bạn' : cur.by}${cur.byAt ? ' lúc ' + hm(new Date(cur.byAt)) : ''}. Mỗi ca chỉ chốt một lần, không cần gửi nữa.`));
+    }).catch(() => {});
     const store = saved.photos || {};
-    delete store['két tiền']; delete store['lịch sử ngân hàng']; // bản nháp từ bản cũ
+    delete store['két tiền']; delete store['lịch sử ngân hàng']; delete store['phiếu chi']; // bản nháp từ bản cũ (v34: phiếu chi theo từng khoản)
     const bar = draftBar(() => DB.set(key, { F, photos: store }));
     const save = () => DB.set(key, { F, photos: store }).then(r => { if (r !== undefined) bar.mark(); return r; });
 
@@ -1389,7 +1475,7 @@
     // chiều mặc định của dòng giải trình mới: theo chiều đang lệch của loại tiền đó
     const curDir = kind => {
       const m = F.money;
-      const d = kind === 'CK' ? (m.bank || 0) - (m.ipBank || 0) : (m.cash || 0) - (m.opening || 0) - (m.ipCash || 0);
+      const d = kind === 'CK' ? (m.bank || 0) - (m.ipBank || 0) : (m.cash || 0) - (m.opening || 0) - (m.ipCash || 0) + spendTotal();
       return d > 0 ? 'thừa' : 'thiếu';
     };
     function exRow(e) {
@@ -1461,8 +1547,8 @@
         if (e.kind === 'CK') exB += sv; else exC += sv;
         if (e.unknown) { if (e.kind === 'CK') unkB += sv; else unkC += sv; }
       });
-      // két phải có = đầu ca + tiền mặt iPOS
-      const dC = m.cash - m.opening - m.ipCash, dB = m.bank - m.ipBank;
+      // két phải có = đầu ca + tiền mặt iPOS − tiền đã chi từ két
+      const dC = m.cash - m.opening - m.ipCash + spendTotal(), dB = m.bank - m.ipBank;
       const uC = dC - exC, uB = dB - exB;
       const note = c.th.note;
       // phần "chưa rõ nguyên nhân" (hoặc chưa khai) dùng cho cảnh báo
@@ -1471,27 +1557,73 @@
       return { dC, dB, exC, exB, uC, uB, bad, misKey, needReason: false, over: kC < -c.th.alert };
     }
 
-    // tồn
-    // chọn đơn vị ml / g cho từng món
-    const unitSeg = (get, set) => {
-      const box = h('div', { class: 'seg useg' }, ['ml', 'g'].map(u => h('button', { type: 'button', class: get() === u ? 'on' : '', onclick: () => {
-        set(u); box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.textContent === u)); save();
-      } }, u)));
-      return box;
+    // chi tiền mặt từ két: mỗi khoản một dòng (chi việc gì, nhóm, số tiền). Két phải có = đầu ca + TM iPOS − tổng chi.
+    const groupsX = c.expenseGroups && c.expenseGroups.length ? c.expenseGroups : ['Khác'];
+    const spendWrap = h('div'), spendSum = h('div', { class: 'hint spendsum' });
+    function spendTotal() { return F.expenses.reduce((s, x) => s + (Number(x.amount) || 0), 0); }
+    const spendStarted = x => !!(String(x.name || '').trim() || x.amount || store[x.k]);
+    function drawSpend() {
+      spendWrap.replaceChildren(...F.expenses.map((x, idx) => {
+        if (!groupsX.includes(x.group)) x.group = groupsX[0];
+        x.k = x.k || 'spend:' + Date.now() + ':' + idx;
+        const note = h('input', { type: 'text', autocomplete: 'off', value: x.note || '', placeholder: 'Ghi chú (không bắt buộc), ví dụ: mua ở đâu, cho món gì', 'aria-label': 'ghi chú khoản chi' });
+        note.addEventListener('input', () => { x.note = note.value; save(); });
+        const name = h('input', { type: 'text', autocomplete: 'off', value: x.name || '', placeholder: 'Chi cho việc gì, ví dụ: mua đá', 'aria-label': 'khoản chi' });
+        name.addEventListener('input', () => { x.name = name.value; update(); });
+        const amt = h('input', { type: 'text', inputmode: 'numeric', class: 'money', autocomplete: 'off', placeholder: 'Số tiền',
+          value: x.amount ? money(x.amount).replace('đ', '') : '', 'aria-label': 'số tiền chi' });
+        amt.addEventListener('input', () => {
+          const dg = amt.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+          x.amount = dg === '' ? '' : Number(dg);
+          amt.value = dg === '' ? '' : money(Number(dg)).replace('đ', '');
+          update();
+        });
+        const sel = h('select', { 'aria-label': 'nhóm chi' }, groupsX.map(g => h('option', { value: g }, g)));
+        sel.value = x.group;
+        sel.addEventListener('change', () => { x.group = sel.value; save(); });
+        return h('div', { class: 'card spend' },
+          h('div', { class: 'row' }, h('div', { class: 'grow' }, name),
+            h('button', { class: 'x', type: 'button', 'aria-label': 'xoá khoản chi', onclick: () => { delete store[x.k]; F.expenses.splice(F.expenses.indexOf(x), 1); drawSpend(); update(); } }, ico('close'))),
+          h('div', { class: 'row spendrow' }, h('div', { class: 'grow' }, sel), h('div', { class: 'grow' }, amt)),
+          note,
+          h('div', { class: 'photos', style: 'margin-top:10px' }, photoSlot(store, x.k, 'phiếu chi / hoá đơn', { required: true, onChange: update })));
+      }));
+    }
+
+    // tồn: đơn vị theo Sheet (CaiDat), nhân viên không đổi; số lẻ dùng dấu chấm
+    const numIn = v => {
+      let x = String(v === undefined || v === null ? '' : v).replace(',', '.').replace(/[^\d.]/g, '');
+      const k = x.indexOf('.');
+      if (k >= 0) x = x.slice(0, k + 1) + x.slice(k + 1).replace(/\./g, '');
+      return x.replace(/^0+(?=\d)/, '');
     };
+    const unitTag = u => u ? h('span', { class: 'unit', text: u }) : null;
+    const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    // hạn dùng (không bắt buộc): ca tối hiện sẵn ô ngày; ca trong ngày bấm "Ghi hạn" mới hiện
+    const expField = (get, set, name) => {
+      const inp = h('input', { type: 'date', class: 'exp', value: get() || '', 'aria-label': 'hạn sử dụng ' + name });
+      const paintExp = () => inp.classList.toggle('past', !!inp.value && inp.value < ymd(now()));
+      inp.addEventListener('change', () => { set(inp.value); paintExp(); save(); });
+      paintExp();
+      const wrap = h('label', { class: 'expbox', hidden: !evening && !get() }, h('span', { text: 'Hạn dùng' }), inp);
+      // nút "+ hạn dùng" nằm dưới tên món để các ô số luôn thẳng hàng
+      const chip = evening || get() ? null : h('button', { type: 'button', class: 'linkbtn expchip', onclick: () => { chip.remove(); wrap.hidden = false; } }, '+ hạn dùng');
+      return { chip, wrap };
+    };
+    const nameCol = (text, ex) => h('div', { class: 'name' }, h('span', { text }), ex.chip);
     const stockWrap = h('div', null, items.map(it => {
       const st = F.stock[it.name] = F.stock[it.name] || { left: '', refill: '', on: false };
-      // gõ tay số ml, chỉ nhận chữ số
-      const refUnit = h('span', { class: 'unit', text: st.unit || 'ml' });
-      const ml = v => String(v || '').replace(/\D/g, '').replace(/^0+(?=\d)/, '');
-      const inp = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', value: st.left, 'aria-label': 'còn lại ' + it.name + ' (ml)' });
-      inp.addEventListener('input', () => { st.left = ml(inp.value); inp.value = st.left; update(); });
+      const inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: st.left, 'aria-label': 'còn lại ' + it.name + (it.unit ? ' (' + it.unit + ')' : '') });
+      inp.addEventListener('input', () => { st.left = numIn(inp.value); inp.value = st.left; update(); });
+      const ex = expField(() => st.exp, v => { st.exp = v; }, it.name);
       const row = h('div', { class: 'stock' },
-        h('div', { class: 'name', text: it.name }),
-        h('div', { class: 'mlbox' }, inp, unitSeg(() => st.unit || 'ml', u => { st.unit = u; refUnit.textContent = u; })));
+        nameCol(it.name, ex),
+        h('div', { class: 'mlbox' }, inp, unitTag(it.unit) || h('span', { class: 'unit' })),
+        ex.wrap);
       if (evening) {
-        const rin = h('input', { type: 'text', inputmode: 'numeric', placeholder: 'Lượng đã bổ sung', autocomplete: 'off', value: st.refill, style: 'max-width:180px' });
-        rin.addEventListener('input', () => { st.refill = ml(rin.value); rin.value = st.refill; save(); });
+        const refUnit = unitTag(it.unit);
+        const rin = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'Lượng đã bổ sung', autocomplete: 'off', value: st.refill, style: 'max-width:180px' });
+        rin.addEventListener('input', () => { st.refill = numIn(rin.value); rin.value = st.refill; save(); });
         const box = h('div', { class: 'refill', hidden: !st.on }, rin, refUnit);
         const chip = h('button', { type: 'button', class: 'chip' + (st.on ? ' on' : ''), onclick: () => {
           st.on = !st.on; chip.classList.toggle('on', st.on); box.hidden = !st.on; if (!st.on) { st.refill = ''; rin.value = ''; } save();
@@ -1504,7 +1636,7 @@
     // ca tối: kiểm nguyên liệu chi tiết, chia theo nhóm (chủ quán sửa danh sách ở CaiDat cột O:Q)
     const evItems = evening ? (c.evening || []) : [];
     F.evening = F.evening || {};
-    F.evUnit = F.evUnit || {};
+    F.evExp = F.evExp || {};
     const evWrap = h('div');
     if (evItems.length) {
       const groups = [...new Set(evItems.map(it => it.group))];
@@ -1512,20 +1644,23 @@
         evWrap.append(h('div', { class: 'evgroup', text: g }));
         evItems.filter(it => it.group === g).forEach(it => {
           if (F.evening[it.name] === undefined) F.evening[it.name] = '';
-          const inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: F.evening[it.name], 'aria-label': it.name });
-          inp.addEventListener('input', () => {
-            let v = inp.value.replace(',', '.').replace(/[^\d.]/g, '');
-            const k = v.indexOf('.');
-            if (k >= 0) v = v.slice(0, k + 1) + v.slice(k + 1).replace(/\./g, '');
-            F.evening[it.name] = v; inp.value = v; update();
-          });
-          evWrap.append(h('div', { class: 'stock' }, h('div', { class: 'name', text: it.name }),
-            h('div', { class: 'mlbox' }, inp, unitSeg(() => F.evUnit[it.name] || (it.unit === 'g' ? 'g' : 'ml'), u => { F.evUnit[it.name] = u; }))));
+          const inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: F.evening[it.name], 'aria-label': it.name + (it.unit ? ' (' + it.unit + ')' : '') });
+          inp.addEventListener('input', () => { const v = numIn(inp.value); F.evening[it.name] = v; inp.value = v; update(); });
+          const ex = expField(() => F.evExp[it.name], v => { F.evExp[it.name] = v; }, it.name);
+          evWrap.append(h('div', { class: 'stock' }, nameCol(it.name, ex),
+            h('div', { class: 'mlbox' }, inp, unitTag(it.unit) || h('span', { class: 'unit' })), ex.wrap));
         });
       });
     }
 
-    // hủy: mỗi mục là 1 box, chọn Nguyên vật liệu (ml / g) hoặc Công cụ dụng cụ (cái); không có thì bỏ trống
+    // hủy: mỗi mục là 1 box, chọn Nguyên vật liệu hoặc Công cụ dụng cụ (cái); không có thì bỏ trống.
+    // Nguyên liệu trùng tên món trong Sheet thì lấy đúng đơn vị của món đó, không thì chọn trong các đơn vị có ở Sheet.
+    const knownUnit = nm => {
+      const k = String(nm || '').trim().toLowerCase();
+      const hit = (c.stock || []).concat(c.evening || []).find(s => s.name.toLowerCase() === k && s.unit);
+      return hit ? hit.unit : '';
+    };
+    const unitOpts = c.units && c.units.length ? c.units : ['ml', 'g'];
     const HUY_REASONS = { nvl: ['Hết hạn', 'Hỏng / ôi', 'Pha lỗi', 'Đổ, rơi'], ccdc: ['Vỡ', 'Hỏng', 'Mất'] };
     const nvlNames = [...new Set(items.map(it => it.name).concat((c.evening || []).map(it => it.name)))];
     const huyList = h('datalist', { id: 'huy-nvl' }, nvlNames.map(n => h('option', { value: n })));
@@ -1541,14 +1676,28 @@
             onclick: () => { if (d.kind === k) return; d.kind = k; d.reason = ''; drawHuy(); update(); } }, t)));
         const name = h('input', { type: 'text', autocomplete: 'off', value: d.name || '', placeholder: tool ? 'Ví dụ: ly thuỷ tinh 350ml' : 'Ví dụ: sữa tươi',
           'aria-label': 'tên ' + (tool ? 'dụng cụ' : 'nguyên liệu'), list: tool ? null : 'huy-nvl' });
-        name.addEventListener('input', () => { d.name = name.value; update(); });
+        const unitBox = h('span', { class: 'ubox' });
+        let shownKu = null;
+        const drawUnit = () => {
+          if (tool) { unitBox.replaceChildren(unitTag('cái')); return; }
+          const ku = knownUnit(d.name);
+          if (ku === shownKu && unitBox.childElementCount) return;
+          shownKu = ku;
+          if (ku) { d.unit = ku; unitBox.replaceChildren(unitTag(ku)); return; }
+          if (!unitOpts.includes(d.unit)) d.unit = unitOpts[0];
+          const sel = h('select', { class: 'usel', 'aria-label': 'đơn vị' }, unitOpts.map(u => h('option', { value: u }, u)));
+          sel.value = d.unit;
+          sel.addEventListener('change', () => { d.unit = sel.value; save(); });
+          unitBox.replaceChildren(sel);
+        };
+        drawUnit();
+        name.addEventListener('input', () => { d.name = name.value; drawUnit(); update(); });
         const qty = h('input', { type: 'text', inputmode: tool ? 'numeric' : 'decimal', autocomplete: 'off', value: d.qty || '', 'aria-label': 'số lượng hủy' });
         qty.addEventListener('input', () => {
           let v = qty.value.replace(',', '.').replace(tool ? /\D/g : /[^\d.]/g, '');
           const p = v.indexOf('.'); if (p >= 0) v = v.slice(0, p + 1) + v.slice(p + 1).replace(/\./g, '');
           d.qty = v; qty.value = v; update();
         });
-        const unit = tool ? h('span', { class: 'unit', text: 'cái' }) : unitSeg(() => d.unit || 'ml', u => { d.unit = u; });
         const reason = h('input', { type: 'text', autocomplete: 'off', value: d.reason || '', placeholder: 'Lý do', 'aria-label': 'lý do hủy' });
         reason.addEventListener('input', () => { d.reason = reason.value; drawChips(); update(); });
         const chips = h('div', { class: 'chips' });
@@ -1558,7 +1707,7 @@
         return h('div', { class: 'card huy' + (tool ? ' tool' : '') },
           h('div', { class: 'row' }, kindSeg, h('div', { class: 'grow' }),
             h('button', { class: 'x', type: 'button', 'aria-label': 'xoá mục hủy', onclick: () => { delete store[d.k]; F.discards.splice(F.discards.indexOf(d), 1); drawHuy(); update(); } }, ico('close'))),
-          h('div', { class: 'stock' }, h('div', { class: 'name' }, name), h('div', { class: 'mlbox' }, qty, unit)),
+          h('div', { class: 'stock' }, h('div', { class: 'name' }, name), h('div', { class: 'mlbox' }, qty, unitBox)),
           h('div', { style: 'margin-top:10px' }, reason), chips,
           h('div', { class: 'photos', style: 'margin-top:10px' }, photoSlot(store, d.k, 'ảnh (không bắt buộc)', { onChange: update })));
       }));
@@ -1590,7 +1739,7 @@
           ...staffNames.filter(n => n !== S.name).map(n => h('button', { type: 'button', class: 'chip' + (t.to.includes(n) ? ' on' : ''),
             'aria-pressed': t.to.includes(n) ? 'true' : 'false',
             onclick: () => { t.to = t.to.includes(n) ? t.to.filter(x => x !== n) : t.to.concat(n); drawWho(); save(); } }, firstName(n))),
-          h('span', { class: 'hint', text: t.to.length ? '' : '(chưa chọn ai = ai ca sau cũng làm)' }));
+          h('span', { class: 'hint', text: t.to.length ? '(chỉ người được chọn thấy việc này)' : '(chưa chọn ai = người ca sau thấy, người cùng ca không thấy)' }));
         drawWho();
         return h('div', { class: 'card', style: 'margin:8px 0' },
           h('div', { class: 'row' }, h('div', { class: 'grow' }, inp),
@@ -1619,7 +1768,13 @@
       if (cc && cc.uC) out.push('giải trình tiền mặt (còn ' + diffText(cc.uC) + ')');
       if (cc && cc.uB) out.push('giải trình chuyển khoản (còn ' + diffText(cc.uB) + ')');
       moneyPhotos.concat(c.areas).forEach(a => { if (!hasPhoto(store[a])) out.push('ảnh ' + a); });
-      items.forEach(it => { if (F.stock[it.name].left === '') out.push('tồn ' + it.name); });
+      F.expenses.filter(spendStarted).forEach(x => {
+        const nm = String(x.name || '').trim();
+        if (!nm) out.push('khoản chi ' + (x.amount ? money(x.amount) : '') + ' chi cho việc gì');
+        if (!(Number(x.amount) > 0)) out.push('số tiền chi ' + (nm || ''));
+        if (!hasPhoto(store[x.k])) out.push('ảnh phiếu chi ' + (nm || ''));
+      });
+      items.forEach(it => { if (F.stock[it.name].left === '' || F.stock[it.name].left === '.') out.push('tồn ' + it.name); });
       evItems.forEach(it => { if (!String(F.evening[it.name] || '').length || F.evening[it.name] === '.') out.push(it.name); });
       F.discards.filter(huyStarted).forEach(d => {
         const nm = String(d.name || '').trim() || (d.kind === 'ccdc' ? 'dụng cụ' : 'nguyên liệu');
@@ -1631,6 +1786,8 @@
     }
 
     function update() {
+      const sp = spendTotal();
+      spendSum.replaceChildren(...(sp ? ['Tổng chi ', h('b', { class: 'num', text: money(sp) }), ' · đã trừ vào tiền phải có trong két'] : ['Không chi gì thì bỏ qua.']));
       const cc = cashCalc();
       cashHint.textContent = cc ? '' : 'Điền đủ các ô tiền mặt (kể cả đầu ca) và chuyển khoản để xem chênh lệch.';
       blockC.el.hidden = blockB.el.hidden = !cc;
@@ -1651,7 +1808,7 @@
             h('div', { class: u ? 'warn' : 'ok' }, u ? ['Còn ', h('b', { text: diffText(u) }), ' chưa giải trình · phải khớp mới gửi được'] : 'Đã khớp')] : []));
         };
         paintBlock(blockC, cc.dC, cc.exC, cc.uC,
-          `đầu ca ${money(m.opening)} + iPOS ${money(m.ipCash)} = phải có ${money(m.opening + m.ipCash)} · đếm được ${money(m.cash)}`);
+          `đầu ca ${money(m.opening)} + iPOS ${money(m.ipCash)}${sp ? ' − chi ' + money(sp) : ''} = phải có ${money(m.opening + m.ipCash - sp)} · đếm được ${money(m.cash)}`);
         paintBlock(blockB, cc.dB, cc.exB, cc.uB, `Ngân hàng ${money(m.bank)} · iPOS ${money(m.ipBank)}`);
       }
       cashWarn.replaceChildren(
@@ -1671,23 +1828,24 @@
         await waitUploads(store, submit);
         submit.replaceChildren(h('span', { class: 'spin' }), 'đang gửi…');
         const photos = {};
-        moneyPhotos.concat(['phiếu chi'], c.areas).forEach(a => { if (store[a] && store[a].id) photos[a] = store[a].id; });
+        moneyPhotos.concat(c.areas).forEach(a => { if (store[a] && store[a].id) photos[a] = store[a].id; });
         const payload = {
           money: F.money,
           explains: F.explains.filter(e => String(e.raw || '').trim()).map(e => ({ kind: e.kind, dir: e.dir, raw: e.raw, reason: e.reason, unknown: !!e.unknown })),
           reason: F.reason,
           photos,
-          eveningUnits: Object.fromEntries(evItems.map(it => [it.name, F.evUnit[it.name] || (it.unit === 'g' ? 'g' : 'ml')])),
-          stock: Object.fromEntries(items.map(it => [it.name, { unit: F.stock[it.name].unit || 'ml', left: F.stock[it.name].left, refill: evening && F.stock[it.name].on ? F.stock[it.name].refill : '' }])),
+          expenses: F.expenses.filter(spendStarted).map(x => ({ name: x.name, group: x.group, amount: x.amount, note: x.note || '', photoId: store[x.k] && store[x.k].id || '' })),
+          stock: Object.fromEntries(items.map(it => [it.name, { left: F.stock[it.name].left, refill: evening && F.stock[it.name].on ? F.stock[it.name].refill : '', exp: F.stock[it.name].exp || '' }])),
           evening: Object.fromEntries(evItems.map(it => [it.name, F.evening[it.name]])),
+          eveningExp: Object.fromEntries(evItems.map(it => [it.name, F.evExp[it.name] || ''])),
           completed: ed ? [] : completedTasks(tasks, store),
-          discards: F.discards.filter(huyStarted).map(d => ({ kind: d.kind, name: d.name, qty: d.qty, unit: d.kind === 'ccdc' ? 'cái' : (d.unit || 'ml'),
+          discards: F.discards.filter(huyStarted).map(d => ({ kind: d.kind, name: d.name, qty: d.qty, unit: d.kind === 'ccdc' ? 'cái' : (knownUnit(d.name) || d.unit || ''),
             reason: d.reason, photoId: store[d.k] && store[d.k].id || '' })),
           others: F.others.filter(o => o.text.trim()).map(o => ({ text: o.text, photoId: store[o.k] && store[o.k].id })),
           handover: F.handover.filter(t => t.text.trim()).map(t => ({ text: t.text, to: t.to || [] })),
           incident: F.incident, note: F.note,
         };
-        if (ed) payload.editOf = ed.editOf;
+        if (ed) payload.editOf = ed.editOf; else payload.slot = target.idx;
         const r = await api('submitClosing', payload);
         // giữ bản vừa gửi trên máy để sửa lại được (24 giờ)
         await DB.set(sentKey(), { id: r.id, at: ed ? ed.rec.at : Date.now(), shift, F: JSON.parse(JSON.stringify(F)), photos: store });
@@ -1708,32 +1866,42 @@
 
     render(back(), h('h2', { class: 'title', text: ed ? 'Sửa báo cáo chốt ca' : 'Báo cáo chốt ca' }),
       h('p', { class: 'sub', text: ed ? `Bản gửi lúc ${hm(new Date(ed.rec.at))}. Sửa xong bấm gửi: bản trên Sheet được thay, tin Zalo ghi rõ là bản sửa.`
-        : `Ca ${shift} · ${hm(now())}${saved.F ? ' · đã khôi phục bản nháp' : ''}` }),
+        : `Ca ${shift} · ${hm(now())}${target.late ? ' · gửi trễ sau mốc, vẫn tính ca ' + shift : ''}${saved.F ? ' · đã khôi phục bản nháp' : ''}` }),
+      dupWarn,
       h('h3', { text: 'Tiền theo iPOS' }),
       moneyField('ipRevenue', 'Tổng doanh thu'), moneyField('ipCash', 'Tiền mặt'), moneyField('ipBank', 'Chuyển khoản'),
       h('h3', { text: 'Tiền thực tế' }),
       moneyField('opening', 'Tiền mặt đầu ca (tiền lẻ có sẵn trong két lúc nhận ca)'),
       moneyField('cash', 'Tiền mặt đếm trong két lúc chốt (tổng)'),
       moneyField('bank', 'Chuyển khoản đã về (xem app ngân hàng)'),
+      h('h3', { text: 'Chi tiền mặt từ két' }),
+      h('p', { class: 'hint', text: 'Mỗi khoản chi phải ghi rõ chi cho việc gì và chụp phiếu chi / hoá đơn của khoản đó. Tổng chi tự trừ vào tiền phải có trong két. Giải trình bên dưới chỉ dùng khi lệch bất thường.' }),
+      spendWrap,
+      h('button', { class: 'add', type: 'button', onclick: () => { F.expenses.push({ name: '', group: groupsX[0], amount: '' }); drawSpend(); update();
+        const last = spendWrap.lastElementChild; const inp = last && last.querySelector('input'); if (inp) inp.focus(); } }, ico('add'), 'Thêm khoản chi'),
+      spendSum,
+      h('h3', { text: 'Đối soát két' }),
       cashBox,
       reasonWrap,
       moneyField('tip', 'Tip tiền mặt (để riêng)', true),
       h('h3', { text: 'Ảnh phiếu' }),
       h('div', { class: 'photos' },
-        photoSlot(store, 'phiếu chốt ca iPOS', 'phiếu chốt ca iPOS', { required: true, onChange: update }),
-        photoSlot(store, 'phiếu chi', 'phiếu chi (nếu có)', { onChange: update })),
+        photoSlot(store, 'phiếu chốt ca iPOS', 'phiếu chốt ca iPOS', { required: true, onChange: update })),
       h('h3', { text: 'Ảnh khu vực' }),
       h('div', { class: 'photos' }, c.areas.map(a => photoSlot(store, a, a, { required: true, onChange: update }))),
       h('h3', { text: 'Tồn nhanh' + (evening ? ' · ca tối' : '') }),
-      h('p', { class: 'hint', text: 'Gõ lượng còn lại của từng món, chọn đơn vị ml hoặc g bên cạnh. Cách đo: nhìn vạch thể tích trên bình / chai đang đựng nguyên liệu (ví dụ chai 1 lít còn khoảng nửa thì ghi 500 ml).' }),
+      h('p', { class: 'hint', text: evening
+        ? 'Gõ lượng còn lại của từng món theo đơn vị ghi bên cạnh (số lẻ dùng dấu chấm, ví dụ 12.5). Ca tối kiểm hạn dùng: ghi ngày hết hạn của mẻ đang dùng, hết hạn thì hủy và ghi ở mục Hủy.'
+        : 'Gõ lượng còn lại của từng món theo đơn vị ghi bên cạnh. Ca trong ngày chỉ kiểm tồn nhanh, hạn dùng không bắt buộc (bấm "+ hạn dùng" nếu cần).' }),
+      shelfLink(),
       stockWrap,
       evItems.length ? [h('h3', { text: 'Kiểm nguyên liệu ca tối' }),
-        h('p', { class: 'hint', text: 'Chỉ ca tối. Cân hoặc nhìn vạch rồi gõ lượng còn lại của từng loại, chọn ml hoặc g bên cạnh (số lẻ dùng dấu chấm, ví dụ 12.5).' }),
+        h('p', { class: 'hint', text: 'Cân hoặc nhìn vạch rồi gõ lượng còn lại theo đơn vị ghi bên cạnh, kèm hạn dùng (không bắt buộc).' }),
         evWrap] : null,
       h('h3', { text: 'Hủy' }),
       h('p', { class: 'hint', text: 'Nguyên vật liệu hỏng, hết hạn, pha lỗi… hoặc công cụ dụng cụ bị vỡ, hỏng. Mỗi món một box, không có thì bỏ qua.' }),
       huyWrap,
-      h('button', { class: 'add', type: 'button', onclick: () => { F.discards.push({ kind: 'nvl', name: '', qty: '', unit: 'ml', reason: '' }); drawHuy(); update(); } }, ico('add'), 'Thêm mục hủy'),
+      h('button', { class: 'add', type: 'button', onclick: () => { F.discards.push({ kind: 'nvl', name: '', qty: '', unit: '', reason: '' }); drawHuy(); update(); } }, ico('add'), 'Thêm mục hủy'),
       h('h3', { text: 'Việc được bàn giao' }),
       earlier.map(x => h('div', { class: 'card donecard' },
         x.file ? h('img', { src: URL.createObjectURL(x.file), alt: '' }) : null,
@@ -1747,7 +1915,7 @@
       h('h3', { text: 'Sự cố' }), incident,
       h('h3', { text: 'Ghi chú' }), note,
       missing, submit, bar);
-    drawEx(); drawHuy(); drawOthers(); drawHand(); update();
+    drawEx(); drawSpend(); drawHuy(); drawOthers(); drawHand(); update();
   }
 
   // ---------- gửi Zalo (2 bước, đã thử trên iPhone) ----------
@@ -1770,16 +1938,26 @@
   // vì vậy nút ảnh luôn bấm được, không chờ bước 1.
   function viewShare(r, files, again) {
     const canShare = !!navigator.share;
+    // lỗi hay gặp trên iPhone: bảng chia sẻ lần trước (gửi tin) chưa đóng hẳn → InvalidStateError; bấm lại sau 1–2 giây là được
+    const BUSY = 'Bảng chia sẻ lần trước chưa đóng hẳn. Đợi 1–2 giây rồi bấm lại nút này.';
     const shareFiles = async (list, btn, doneText) => {
       if (!canShare) { toast('Máy này không chia sẻ ảnh được. Mở app bằng Safari trên iPhone.', true); return false; }
-      const data = { files: list };
-      if (navigator.canShare && !navigator.canShare(data)) throw new Error('máy không hỗ trợ chia sẻ nhóm ảnh này');
+      if (!list.length) { toast('Ảnh của báo cáo này không còn trên máy. Ảnh vẫn nằm trong thư mục báo cáo trên Drive.', true); return false; }
+      // File mới, đúng tên đuôi .jpg: iPhone chia sẻ ổn định hơn
+      const data = { files: list.map((f, i) => new File([f], /\.jpe?g$/i.test(f.name || '') ? f.name : 'anh-' + (i + 1) + '.jpg', { type: f.type || 'image/jpeg' })) };
+      let can = true;
+      try { can = !navigator.canShare || navigator.canShare(data); } catch (e) { can = true; }
+      if (!can) throw new Error('máy không hỗ trợ chia sẻ nhóm ảnh này');
       const p = navigator.share(data);
       btn.classList.add('done'); btn.textContent = doneText; // bảng chia sẻ đã mở
       if (list === files) markShare('photos');
-      try { await p; } catch (e) { if (e.name === 'AbortError') { btn.classList.remove('done'); btn.textContent = btn.dataset.label; } throw e; }
+      try { await p; } catch (e) {
+        if (e.name === 'AbortError' || e.name === 'InvalidStateError' || e.name === 'NotAllowedError') { btn.classList.remove('done'); btn.textContent = btn.dataset.label; }
+        throw e;
+      }
       return true;
     };
+    const shareErr = e => e.name === 'InvalidStateError' ? toast(BUSY, true) : e.name === 'NotAllowedError' ? toast('Bấm lại nút để mở bảng chia sẻ.', true) : null;
     // gửi cả loạt bị lỗi → chia thành từng đợt 5 ảnh
     const batches = h('div');
     function showBatches() {
@@ -1792,17 +1970,18 @@
           b.addEventListener('click', () => {
             const p = shareFiles(g, b, label + ' · đã mở');
             if ([...batches.querySelectorAll('button')].every(x => x.classList.contains('done'))) markShare('photos');
-            p.catch(e => { if (e.name !== 'AbortError') toast('Không gửi được: ' + e.message, true); });
+            p.catch(e => { if (e.name === 'AbortError') return; if (shareErr(e) === null) toast('Không gửi được: ' + e.message, true); });
           });
           return b;
         }));
     }
     const b2Label = `2. Gửi ${files.length} ảnh vào Zalo`;
-    const b2 = h('button', { class: 'btn', disabled: !files.length, 'data-label': b2Label }, b2Label);
+    const b2 = h('button', { class: 'btn', 'data-label': b2Label }, b2Label);
     b2.addEventListener('click', async () => {
       try { await shareFiles(files, b2, '2. Đã mở chia sẻ ảnh'); }
       catch (e) {
         if (e.name === 'AbortError') return;
+        if (shareErr(e) !== null) return;
         toast('Gửi cả loạt không được, thử gửi từng đợt bên dưới.', true);
         showBatches();
       }
@@ -1819,8 +1998,8 @@
       b1.classList.add('done'); b1.textContent = '1. Đã mở chia sẻ tin';
       markShare('text');
       try { await p; } catch (e) {
-        if (e.name === 'AbortError') { b1.classList.remove('done'); b1.textContent = b1Label; }
-        else toast('Không mở được chia sẻ: ' + e.message, true);
+        if (e.name === 'AbortError' || e.name === 'InvalidStateError' || e.name === 'NotAllowedError') { b1.classList.remove('done'); b1.textContent = b1Label; }
+        if (e.name !== 'AbortError' && shareErr(e) === null) toast('Không mở được chia sẻ: ' + e.message, true);
       }
     });
     render(

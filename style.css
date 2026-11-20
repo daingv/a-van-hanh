@@ -675,3 +675,40 @@ input, textarea, select { transition: box-shadow .2s ease, border-color .2s ease
 }
 
 .aflag.ok { background: var(--ok-bg, #e8f6ec); color: var(--ok); }
+
+/* v33: hạn dùng, bảng tra hạn sử dụng, chi tiêu, đơn vị cố định */
+.stock .expbox { flex-basis: 100%; display: flex; align-items: center; justify-content: flex-end; gap: 10px; color: var(--muted); font-size: var(--t4); }
+.stock .expbox[hidden] { display: none; }
+.stock input.exp { width: auto; min-width: 150px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--card); color: var(--ink); font: 500 15px/1.3 var(--sans); font-variant-numeric: tabular-nums; -webkit-appearance: none; appearance: none; }
+.stock input.exp.past { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); }
+.stock .name { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.stock .name .linkbtn.expchip { margin: 0; padding: 2px 0; color: var(--muted); font-size: var(--t4); text-decoration: none; }
+.stock .mlbox .unit { min-width: 34px; }
+.stock .ubox select.usel { width: auto; padding: 10px 26px 10px 10px; font-weight: 500; }
+.linkbtn.shelfbtn { margin: 0 0 6px; display: inline-flex; }
+.card.spend { margin: 8px 0; }
+.card.spend .spendrow { margin-top: 8px; gap: 8px; }
+.card.spend .spendrow .grow { min-width: 0; }
+.card.spend select, .card.spend input { width: 100%; }
+.spendsum { margin-top: 6px; }
+
+.mover { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0); transition: background-color .3s ease; }
+.mover.in { background: rgba(0,0,0,.32); }
+.msheet { width: 100%; max-width: 560px; max-height: 82vh; display: flex; flex-direction: column; background: var(--card); border-radius: 16px 16px 0 0;
+  padding: 6px 20px calc(20px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 30px rgba(0,0,0,.12);
+  transform: translateY(100%); transition: transform .32s cubic-bezier(.32,.72,0,1); }
+.mover.in .msheet { transform: none; }
+.msheet-head { display: flex; align-items: center; gap: 8px; padding: 10px 0 6px; }
+.msheet-head h3 { flex: 1; margin: 0; }
+.msheet-body { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.shelf { list-style: none; margin: 0; padding: 0; }
+.shelf li { padding: 12px 0; border-bottom: 1px solid var(--hair); }
+.shelf li:last-child { border-bottom: 0; }
+.shelf .top { display: flex; align-items: baseline; gap: 12px; }
+.shelf .top b { flex: 1; font-weight: 500; }
+.shelf .life { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.shelf small { display: block; margin-top: 2px; color: var(--muted); font-size: var(--t4); }
+@media (prefers-reduced-motion: reduce) {
+  .msheet { transition: opacity .2s ease; transform: none; opacity: 0; }
+  .mover.in .msheet { opacity: 1; }
+}
